@@ -18,33 +18,49 @@ export default function AdminDashboardScreen({ navigation }) {
     loading: true
   });
 
+  const [seatStats, setSeatStats] = useState({ total: 0, occupied: 0, reserved: 0, free: 0, pct: 0 });
+
   useEffect(() => {
     async function fetchStats() {
       try {
         const { count: booksCount } = await supabase
           .from('books')
           .select('*', { count: 'exact', head: true });
-          
+
         const { count: activeHolds } = await supabase
           .from('reservations')
           .select('*', { count: 'exact', head: true })
-          .in('status', ['active', 'pending', 'approved']);
+          .in('status', ['confirmed']);
           
-        const { count: pendingPickup } = await supabase
-          .from('reservations')
+        // Real seat stats from new seat_reservations table (today)
+        const today = new Date().toISOString().split('T')[0];
+        const { data: allSeats } = await supabase.from('seats').select('id, is_blocked');
+        const { data: activeSeatsRes } = await supabase
+          .from('seat_reservations')
+          .select('seat_id, status')
+          .eq('reservation_date', today)
+          .in('status', ['reserved', 'checked_in']);
+
+        const totalSeats = (allSeats || []).filter(s => !s.is_blocked).length;
+        const occupiedNow = (activeSeatsRes || []).filter(r => r.status === 'checked_in').length;
+        const reservedNow = (activeSeatsRes || []).filter(r => r.status === 'reserved').length;
+        const freeNow = totalSeats - occupiedNow - reservedNow;
+        const pct = totalSeats > 0 ? Math.round(((occupiedNow + reservedNow) / totalSeats) * 100) : 0;
+
+        setSeatStats({ total: totalSeats, occupied: occupiedNow, reserved: reservedNow, free: freeNow < 0 ? 0 : freeNow, pct });
+
+        // No-show count (today)
+        const { count: noShowCount } = await supabase
+          .from('seat_reservations')
           .select('*', { count: 'exact', head: true })
-          .eq('status', 'pending');
-          
-        const { count: unattendedSeats } = await supabase
-          .from('seats')
-          .select('*', { count: 'exact', head: true })
-          .eq('status', 'unattended');
+          .eq('reservation_date', today)
+          .eq('status', 'no_show');
           
         setStats({
           totalBooks: booksCount || 0,
           activeHolds: activeHolds || 0,
-          pendingPickup: pendingPickup || 0,
-          unattendedSeats: unattendedSeats || 0,
+          pendingPickup: reservedNow,
+          unattendedSeats: noShowCount || 0,
           loading: false
         });
       } catch (e) {
@@ -163,35 +179,41 @@ export default function AdminDashboardScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Floor Density */}
+        {/* Floor Density - Live Data */}
         <View style={styles.densityCard}>
           <View style={styles.densityHeader}>
             <View style={styles.densityTitleRow}>
               <Ionicons name="pie-chart-outline" size={18} color={colors.textMuted} />
               <Text style={styles.densityTitle}>Floor Density Real-Time</Text>
             </View>
-            <Text style={styles.densityRightText}>Level 2 Stacks</Text>
+            <Text style={styles.densityRightText}>Today • Live</Text>
           </View>
           
           <View style={styles.densityBody}>
             <View style={styles.donutContainer}>
               <View style={styles.donutBase} />
               <View style={styles.donutOverlay} />
-              <Text style={styles.donutText}>73%</Text>
+              <Text style={styles.donutText}>{seatStats.pct}%</Text>
             </View>
             <View style={styles.densityInfo}>
               <View style={styles.densityInfoRow}>
-                <Text style={styles.densityCarrelsText}>Reading Carrels: 35 / 48</Text>
-                <Text style={styles.densityHealthyText}>Healthy</Text>
+                <Text style={styles.densityCarrelsText}>Reading Carrels: {seatStats.occupied + seatStats.reserved} / {seatStats.total}</Text>
+                <Text style={[styles.densityHealthyText, { color: seatStats.pct > 90 ? '#E11D48' : seatStats.pct > 70 ? '#D97706' : colors.primary }]}>
+                  {seatStats.pct > 90 ? 'Critical' : seatStats.pct > 70 ? 'Busy' : 'Healthy'}
+                </Text>
               </View>
               <View style={styles.densityLegendRow}>
                 <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: colors.primary }]} />
-                  <Text style={styles.legendText}>Quiet Zone</Text>
+                  <View style={[styles.legendDot, { backgroundColor: '#1E403F' }]} />
+                  <Text style={styles.legendText}>Occupied ({seatStats.occupied})</Text>
                 </View>
                 <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: '#B0BEC5' }]} />
-                  <Text style={styles.legendText}>Collab Bay</Text>
+                  <View style={[styles.legendDot, { backgroundColor: '#0284C7' }]} />
+                  <Text style={styles.legendText}>Reserved ({seatStats.reserved})</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: '#009688' }]} />
+                  <Text style={styles.legendText}>Free ({seatStats.free})</Text>
                 </View>
               </View>
             </View>
@@ -205,7 +227,7 @@ export default function AdminDashboardScreen({ navigation }) {
             <Text style={styles.sectionRightText}>Desk Utilities</Text>
           </View>
 
-          <TouchableOpacity style={styles.actionCard} onPress={() => navigation.navigate('Books')}>
+          <TouchableOpacity style={styles.actionCard} onPress={() => navigation.navigate('Inventory')}>
             <View style={[styles.actionIconBox, { backgroundColor: '#EFFFFE' }]}>
               <Ionicons name="archive-outline" size={22} color={colors.primary} />
             </View>
@@ -216,7 +238,7 @@ export default function AdminDashboardScreen({ navigation }) {
             <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.actionCard} onPress={() => navigation.navigate('Manage')}>
+          <TouchableOpacity style={styles.actionCard} onPress={() => navigation.navigate('Reservations')}>
             <View style={[styles.actionIconBox, { backgroundColor: '#EFFFFE' }]}>
               <Ionicons name="calendar-outline" size={22} color={colors.primary} />
             </View>
@@ -227,7 +249,7 @@ export default function AdminDashboardScreen({ navigation }) {
             <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.actionCard} onPress={() => navigation.navigate('SeatAllocation')}>
+          <TouchableOpacity style={styles.actionCard} onPress={() => navigation.navigate('Seats')}>
             <View style={[styles.actionIconBox, { backgroundColor: '#EFFFFE' }]}>
               <MaterialCommunityIcons name="sofa-single-outline" size={22} color={colors.primary} />
             </View>

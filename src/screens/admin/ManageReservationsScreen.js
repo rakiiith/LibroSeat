@@ -12,7 +12,7 @@ export default function ManageReservationsScreen() {
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const seatCount = reservations.filter(r => r.type === 'seat').length;
+  const seatCount = reservations.filter(r => r.type === 'seat' || r.type === 'seat_adv').length;
   const bookCount = reservations.filter(r => r.type === 'book').length;
   const alertCount = reservations.filter(r => r.status === 'overdue' || r.status === 'unattended').length;
 
@@ -34,7 +34,7 @@ export default function ManageReservationsScreen() {
       if (!patronName.toLowerCase().includes(q) && !patronId.toLowerCase().includes(q) && !resourceName.toLowerCase().includes(q)) return false;
     }
     // 2. Tabs
-    if (activeFilter === 'Seats' && r.type !== 'seat') return false;
+    if (activeFilter === 'Seats' && r.type !== 'seat' && r.type !== 'seat_adv') return false;
     if (activeFilter === 'Books' && r.type !== 'book') return false;
     if (activeFilter === 'Alerts' && r.status !== 'overdue' && r.status !== 'unattended') return false;
     return true;
@@ -77,19 +77,20 @@ export default function ManageReservationsScreen() {
     const patronId = item.profile?.student_id || item.user_id?.substring(0,6).toUpperCase();
     const patronRole = item.profile?.role === 'staff' ? 'Staff Member' : 'Student';
     
-    let statusLabel = item.status === 'pending' ? 'Active' : item.status.charAt(0).toUpperCase() + item.status.slice(1);
+    let statusLabel = item.status.charAt(0).toUpperCase() + item.status.slice(1);
     let avatarBg = '#E5E7EB';
     let avatarText = '#374151';
     let statusBg = '#E5E7EB';
     let statusColor = '#374151';
     
-    if (item.status === 'pending' || item.status === 'active') {
+    if (item.status === 'confirmed' || item.status === 'active' || item.status === 'reserved' || item.status === 'checked_in') {
+      statusLabel = 'Active';
       avatarBg = '#D1FAE5'; avatarText = '#065F46';
       statusBg = '#D1FAE5'; statusColor = '#059669';
-    } else if (item.status === 'unattended') {
+    } else if (item.status === 'unattended' || item.status === 'no_show') {
       avatarBg = '#FCE7F3'; avatarText = '#9D174D';
       statusBg = '#FCE7F3'; statusColor = '#E11D48';
-      statusLabel = 'Unattended';
+      statusLabel = 'No-Show';
     } else if (item.status === 'overdue') {
       avatarBg = '#FEF3C7'; avatarText = '#92400E';
       statusBg = '#FEF3C7'; statusColor = '#D97706';
@@ -99,10 +100,17 @@ export default function ManageReservationsScreen() {
       statusBg = '#F3F4F6'; statusColor = '#9CA3AF';
     }
 
-    const resourceName = item.type === 'seat' ? `Carrel ${item.item?.seat_number || '?'}` : (item.item?.title || 'Unknown Book');
-    let resourceDetail = item.type === 'seat' ? `Reserved on ${new Date(item.created_at).toLocaleDateString()}` : (item.due_date ? `Due ${new Date(item.due_date).toLocaleString()}` : 'No Due Date');
+    const resourceName = (item.type === 'seat' || item.type === 'seat_adv') ? `Carrel ${item.item?.seat_number || '?'}` : (item.item?.title || 'Unknown Book');
+    let resourceDetail = '';
+    if (item.type === 'seat_adv') {
+      resourceDetail = `${item.reservation_date} | ${item.start_time.substring(0,5)} - ${item.due_date.substring(11,16)}`;
+    } else if (item.type === 'seat') {
+      resourceDetail = `Reserved on ${new Date(item.created_at).toLocaleDateString()}`;
+    } else {
+      resourceDetail = item.due_date ? `Due ${new Date(item.due_date).toLocaleString()}` : 'No Due Date';
+    }
     const resourceDetailColor = statusColor;
-    const rightBoxText = item.type === 'seat' ? (item.item?.room || 'General') : (item.item?.category || 'General Collection');
+    const rightBoxText = (item.type === 'seat' || item.type === 'seat_adv') ? (item.item?.zone || item.item?.room || 'General') : (item.item?.category || 'General Collection');
 
     return (
       <View style={styles.card}>
@@ -130,7 +138,7 @@ export default function ManageReservationsScreen() {
         <View style={styles.resourceBox}>
           <View style={styles.resourceBoxLeft}>
             <View style={styles.resourceRow}>
-              {item.type === 'seat' ? (
+              {(item.type === 'seat' || item.type === 'seat_adv') ? (
                 <MaterialCommunityIcons name="sofa-single" size={18} color="#008080" style={styles.resourceIcon} />
               ) : (
                 <MaterialCommunityIcons name="book-open-blank-variant" size={18} color="#008080" style={styles.resourceIcon} />
@@ -138,7 +146,7 @@ export default function ManageReservationsScreen() {
               <Text style={styles.resourceName} numberOfLines={1}>{resourceName}</Text>
             </View>
             <View style={styles.resourceRow}>
-              {item.type === 'seat' ? (
+              {(item.type === 'seat' || item.type === 'seat_adv') ? (
                 <MaterialCommunityIcons name="clock-outline" size={16} color={resourceDetailColor} style={styles.resourceIcon} />
               ) : (
                 <MaterialCommunityIcons name="calendar-month-outline" size={16} color={resourceDetailColor} style={styles.resourceIcon} />
@@ -152,7 +160,7 @@ export default function ManageReservationsScreen() {
         </View>
 
         <View style={styles.actionRow}>
-          {item.type === 'seat' ? (
+          {(item.type === 'seat' || item.type === 'seat_adv') ? (
             <>
               <TouchableOpacity style={styles.btnSecondary}>
                 <Ionicons name="notifications-outline" size={16} color="#4B5563" style={styles.btnIcon} />
@@ -209,7 +217,7 @@ export default function ManageReservationsScreen() {
             <Text style={styles.pageTitle}>Manage Reservations</Text>
             <View style={styles.subtitleRow}>
               <View style={styles.syncDot} />
-              <Text style={styles.itemCountText}>{reservations.filter(r=>r.status === 'pending').length} Active Holds • {reservations.filter(r=>r.status === 'overdue').length} Overdue</Text>
+              <Text style={styles.itemCountText}>{reservations.filter(r=>r.status === 'confirmed' || r.status === 'reserved' || r.status === 'checked_in').length} Active Holds • {reservations.filter(r=>r.status === 'expired' || r.status === 'no_show').length} Overdue/No-Show</Text>
             </View>
           </View>
           <TouchableOpacity style={styles.batchBtn}>

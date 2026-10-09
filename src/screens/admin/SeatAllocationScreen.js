@@ -1,38 +1,46 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, spacing, radius } from '../../theme/theme';
+import { fetchAdminSeatData, blockSeat, updateSeatReservationStatus, TIME_SLOTS } from '../../services/seatReservationService';
 import { supabase } from '../../supabase/supabaseClient';
-import { getRichReservations, releaseReservation } from '../../services/reservationService';
 
 export default function SeatAllocationScreen() {
   const [seats, setSeats] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [autoReleaseEnabled, setAutoReleaseEnabled] = useState(true);
   const [selectedSeat, setSelectedSeat] = useState(null);
-  const [activeReservations, setActiveReservations] = useState({});
+  
+  const today = new Date().toISOString().split('T')[0];
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [selectedSlot, setSelectedSlot] = useState(TIME_SLOTS[0]);
 
   useEffect(() => {
-    fetchSeats();
-  }, []);
+    loadSeats();
+    
+    // Subscribe to realtime updates on seat_reservations
+    const channel = supabase
+      .channel('admin:seat_reservations')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'seat_reservations' }, payload => {
+        loadSeats();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'seats' }, payload => {
+        loadSeats();
+      })
+      .subscribe();
 
-  async function fetchSeats() {
+    return () => { supabase.removeChannel(channel); };
+  }, [selectedDate, selectedSlot]);
+
+  async function loadSeats() {
     setLoading(true);
     try {
-      const { data, error } = await supabase.from('seats').select('*').order('seat_number');
-      if (data && !error) {
-        setSeats(data);
+      const data = await fetchAdminSeatData(selectedDate, selectedSlot);
+      setSeats(data);
+      if (selectedSeat) {
+        const updated = data.find(s => s.id === selectedSeat.id);
+        if (updated) setSelectedSeat(updated);
       }
-      
-      const allRes = await getRichReservations();
-      const activeSeatRes = allRes.filter(r => r.type === 'seat' && (r.status === 'pending' || r.status === 'active' || r.status === 'unattended'));
-      
-      const resMap = {};
-      activeSeatRes.forEach(r => {
-        resMap[r.ref_id] = r;
-      });
-      setActiveReservations(resMap);
     } catch (e) {
       console.warn(e);
     } finally {
@@ -40,22 +48,45 @@ export default function SeatAllocationScreen() {
     }
   }
 
-  const freeCount = seats.filter(s => s.is_available).length;
-  
+  async function handleBlock(seat) {
+    setLoading(true);
+    try {
+      await blockSeat(seat.id, !seat.is_blocked);
+      await loadSeats();
+    } catch (e) {
+      console.warn(e);
+      setLoading(false);
+    }
+  }
+
+  async function handleCancelRes(resId) {
+    setLoading(true);
+    try {
+      await updateSeatReservationStatus(resId, 'cancelled');
+      await loadSeats();
+    } catch (e) {
+      console.warn(e);
+      setLoading(false);
+    }
+  }
+
+  // Calculate Stats
+  let freeCount = 0;
   let occupiedCount = 0;
   let reservedCount = 0;
-  let unattendedCount = 0;
+  let noShowCount = 0;
+  let blockedCount = 0;
 
   seats.forEach(s => {
-    if (!s.is_available) {
-      const res = activeReservations[s.id];
-      if (res) {
-        if (res.status === 'unattended') unattendedCount++;
-        else if (res.status === 'pending') reservedCount++;
-        else occupiedCount++;
-      } else {
-        occupiedCount++;
-      }
+    if (s.is_blocked) {
+      blockedCount++;
+    } else if (s.reservation) {
+      if (s.reservation.status === 'checked_in' || s.reservation.status === 'completed') occupiedCount++;
+      else if (s.reservation.status === 'no_show') noShowCount++;
+      else if (s.reservation.status === 'reserved') reservedCount++;
+      else freeCount++; // cancelled
+    } else {
+      freeCount++;
     }
   });
 
@@ -82,68 +113,23 @@ export default function SeatAllocationScreen() {
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
-        {/* Node Pill */}
-        <View style={styles.nodePillRow}>
-          <View style={styles.nodePill}>
-            <View style={styles.nodePillDot} />
-            <Text style={styles.nodePillText}>STAFF NODE • ZONE A</Text>
-          </View>
-          <TouchableOpacity style={styles.filterBtn}>
-            <Ionicons name="options" size={16} color="#4B5563" />
-          </TouchableOpacity>
-        </View>
-
         {/* Title */}
         <Text style={styles.pageTitle}>Seat Allocation Settings</Text>
         <Text style={styles.pageSubtitle}>Real-time carrel occupancy rules and zone layout</Text>
 
-        {/* Settings Card */}
-        <View style={styles.settingsCard}>
-          <View style={styles.settingsHeader}>
-            <View style={{flexDirection: 'row', alignItems: 'center'}}>
-              <View style={styles.settingIconBox}>
-                <Ionicons name="time-outline" size={18} color="#009688" />
-              </View>
-              <View>
-                <Text style={styles.settingTitle}>Auto-Release Idle Seats</Text>
-                <Text style={styles.settingSub}>Automated grace and buffer checks</Text>
-              </View>
-            </View>
-            <Switch
-              value={autoReleaseEnabled}
-              onValueChange={setAutoReleaseEnabled}
-              trackColor={{ false: '#D1D5DB', true: '#009688' }}
-              thumbColor={colors.white}
-            />
-          </View>
-
-          <View style={styles.settingRow}>
-            <View style={styles.settingRowLeft}>
-              <Ionicons name="timer-outline" size={14} color="#009688" style={{marginRight: 8}} />
-              <Text style={styles.settingRowLabel}>Release buffer threshold</Text>
-            </View>
-            <View style={styles.settingSpinner}>
-              <Text style={styles.settingSpinnerText}>30 min</Text>
-              <Ionicons name="chevron-expand" size={14} color="#6B7280" />
-            </View>
-          </View>
-          <View style={styles.settingRow}>
-            <View style={styles.settingRowLeft}>
-              <Ionicons name="stopwatch-outline" size={14} color="#009688" style={{marginRight: 8}} />
-              <Text style={styles.settingRowLabel}>Check-in grace period</Text>
-            </View>
-            <View style={styles.settingSpinner}>
-              <Text style={styles.settingSpinnerText}>15 min</Text>
-              <Ionicons name="chevron-expand" size={14} color="#6B7280" />
-            </View>
-          </View>
-
-          <View style={styles.alertBanner}>
-            <Ionicons name="notifications-outline" size={14} color="#009688" style={{marginRight: 8}} />
-            <Text style={styles.alertBannerText}>
-              Automated alert dispatched via SMS/Email 5m prior to revocation.
-            </Text>
-          </View>
+        {/* Slot Picker */}
+        <View style={{marginBottom: spacing.lg}}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{gap: 8}}>
+            {TIME_SLOTS.map(slot => (
+              <TouchableOpacity 
+                key={slot.id} 
+                style={[styles.slotChip, selectedSlot.id === slot.id && styles.slotChipActive]}
+                onPress={() => setSelectedSlot(slot)}
+              >
+                <Text style={[styles.slotText, selectedSlot.id === slot.id && styles.slotTextActive]}>{slot.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
 
         {/* Stats Row */}
@@ -153,76 +139,57 @@ export default function SeatAllocationScreen() {
               <Ionicons name="checkmark-circle-outline" size={12} color="#009688" />
               <Text style={[styles.statBoxTitle, { color: '#009688' }]}>FREE</Text>
             </View>
-            <Text style={styles.statBoxNumber}>{freeCount}</Text>
+            <Text style={[styles.statBoxNumber, { color: '#009688' }]}>{freeCount}</Text>
           </View>
-
           <View style={[styles.statBox, { borderTopColor: '#1F2937' }]}>
             <View style={styles.statBoxHeader}>
               <Ionicons name="person" size={12} color="#1F2937" />
               <Text style={[styles.statBoxTitle, { color: '#1F2937' }]}>OCCUPIED</Text>
             </View>
-            <Text style={styles.statBoxNumber}>{occupiedCount}</Text>
+            <Text style={[styles.statBoxNumber, { color: '#1F2937' }]}>{occupiedCount}</Text>
           </View>
-
           <View style={[styles.statBox, { borderTopColor: '#E11D48' }]}>
             <View style={styles.statBoxHeader}>
               <Ionicons name="time-outline" size={12} color="#E11D48" />
-              <Text style={[styles.statBoxTitle, { color: '#E11D48' }]}>IDLE / UNATTENDED</Text>
+              <Text style={[styles.statBoxTitle, { color: '#E11D48' }]}>NO SHOW / IDLE</Text>
             </View>
-            <Text style={[styles.statBoxNumber, { color: '#E11D48' }]}>{unattendedCount}</Text>
+            <Text style={[styles.statBoxNumber, { color: '#E11D48' }]}>{noShowCount}</Text>
           </View>
-        </View>
-
-        {/* Grid Title */}
-        <View style={styles.gridTitleRow}>
-          <Text style={styles.gridTitleMain}>Reading Room • Level 2 Grid</Text>
-          <Text style={styles.gridTitleSub}>Zone A (Carrels)</Text>
         </View>
 
         {/* Legends */}
         <View style={styles.legendRow}>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#009688' }]} />
-            <Text style={styles.legendText}>Free ({freeCount})</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#1F2937' }]} />
-            <Text style={styles.legendText}>Occupied ({occupiedCount})</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#E11D48' }]} />
-            <Text style={[styles.legendText, { color: '#E11D48' }]}>Unattended ({unattendedCount})</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#06B6D4' }]} />
-            <Text style={[styles.legendText, { color: '#06B6D4' }]}>Reserved ({reservedCount})</Text>
-          </View>
+          <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#009688' }]} /><Text style={styles.legendText}>Free ({freeCount})</Text></View>
+          <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#1E403F' }]} /><Text style={styles.legendText}>Occupied ({occupiedCount})</Text></View>
+          <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#06B6D4' }]} /><Text style={styles.legendText}>Reserved ({reservedCount})</Text></View>
+          <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#E11D48' }]} /><Text style={styles.legendText}>No-Show ({noShowCount})</Text></View>
+          <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: '#9CA3AF' }]} /><Text style={styles.legendText}>Blocked ({blockedCount})</Text></View>
         </View>
 
-        {/* Seat Grid */}
+        {/* Grid */}
         {loading ? (
-          <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: spacing.xl }} />
+          <ActivityIndicator color={colors.primary} style={{marginVertical: 40}} />
         ) : (
           <View style={styles.seatGrid}>
-            {seats.map((seat) => {
-              const isSelected = selectedSeat?.id === seat.id;
-              
-              // Map db data to mockup styles based on availability
+            {seats.map(seat => {
               let seatStyle = styles.seatFree;
               let seatTextStyle = styles.seatFreeText;
               let icon = <Ionicons name="ellipse-outline" size={14} color="#009688" />;
               
-              if (!seat.is_available) {
-                const res = activeReservations[seat.id];
-                if (res?.status === 'unattended') {
-                   seatStyle = { backgroundColor: '#FCE7F3', borderWidth: 1, borderColor: '#E11D48' };
+              if (seat.is_blocked) {
+                seatStyle = { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#9CA3AF', justifyContent: 'center', alignItems: 'center', width: 56, height: 64, borderRadius: 12 };
+                seatTextStyle = { fontSize: 12, fontWeight: '700', color: '#9CA3AF', marginBottom: 4 };
+                icon = <Ionicons name="lock-closed" size={12} color="#9CA3AF" />;
+              } else if (seat.reservation) {
+                if (seat.reservation.status === 'no_show') {
+                   seatStyle = { backgroundColor: '#FCE7F3', borderWidth: 1, borderColor: '#E11D48', justifyContent: 'center', alignItems: 'center', width: 56, height: 64, borderRadius: 12 };
                    seatTextStyle = { fontSize: 12, fontWeight: '700', color: '#E11D48', marginBottom: 4 };
                    icon = <Ionicons name="time-outline" size={12} color="#E11D48" />;
-                } else if (res?.status === 'pending') {
-                   seatStyle = { backgroundColor: '#E0F2FE', borderWidth: 1, borderColor: '#0284C7' };
+                } else if (seat.reservation.status === 'reserved') {
+                   seatStyle = { backgroundColor: '#E0F2FE', borderWidth: 1, borderColor: '#0284C7', justifyContent: 'center', alignItems: 'center', width: 56, height: 64, borderRadius: 12 };
                    seatTextStyle = { fontSize: 12, fontWeight: '700', color: '#0284C7', marginBottom: 4 };
                    icon = <Ionicons name="bookmark" size={12} color="#0284C7" />;
-                } else {
+                } else if (seat.reservation.status === 'checked_in') {
                    seatStyle = styles.seatOccupied;
                    seatTextStyle = styles.seatOccupiedText;
                    icon = <Ionicons name="person" size={12} color={colors.white} />;
@@ -230,12 +197,8 @@ export default function SeatAllocationScreen() {
               }
 
               return (
-                <TouchableOpacity 
-                  key={seat.id} 
-                  style={[styles.seatBox, seatStyle, isSelected && { borderWidth: 2, borderColor: '#000' }]}
-                  onPress={() => setSelectedSeat(seat)}
-                >
-                  <Text style={seatTextStyle}>{seat.seat_number}</Text>
+                <TouchableOpacity key={seat.id} style={seatStyle} onPress={() => setSelectedSeat(seat)}>
+                  <Text style={seatTextStyle}>{seat.seat_number.replace('Carrel ', '')}</Text>
                   {icon}
                 </TouchableOpacity>
               );
@@ -251,64 +214,54 @@ export default function SeatAllocationScreen() {
                 <MaterialCommunityIcons name="table-chair" size={24} color="#009688" />
               </View>
               <View style={styles.detailHeaderInfo}>
-                <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                <View style={{flexDirection:'row', alignItems:'center'}}>
                   <Text style={styles.detailCarrelName}>Carrel {selectedSeat.seat_number}</Text>
-                  <View style={styles.quietZoneBadge}>
-                    <Text style={styles.quietZoneText}>Quiet Zone</Text>
-                  </View>
+                  <View style={styles.quietZoneBadge}><Text style={styles.quietZoneText}>{selectedSeat.zone || 'General'}</Text></View>
                 </View>
                 <Text style={styles.detailPatronName}>
-                  {selectedSeat.is_available 
-                    ? 'No Patron Assigned' 
-                    : activeReservations[selectedSeat.id] 
-                      ? `Patron: ${activeReservations[selectedSeat.id].profile?.full_name} (${activeReservations[selectedSeat.id].profile?.student_id || 'N/A'})`
-                      : 'Occupied by unknown'}
+                  {selectedSeat.is_blocked 
+                    ? 'Blocked by Staff' 
+                    : selectedSeat.reservation?.profiles
+                      ? `Patron: ${selectedSeat.reservation.profiles.full_name} (${selectedSeat.reservation.profiles.student_id})`
+                      : 'Free / Unassigned'}
                 </Text>
               </View>
               
-              <View style={[styles.detailStatusBox, { backgroundColor: selectedSeat.is_available ? '#EFFFFE' : (activeReservations[selectedSeat.id]?.status === 'unattended' ? '#FCE7F3' : '#F3F4F6') }]}>
-                <View style={[styles.detailStatusDot, { backgroundColor: selectedSeat.is_available ? '#009688' : (activeReservations[selectedSeat.id]?.status === 'unattended' ? '#E11D48' : '#374151') }]} />
-                <Text style={[styles.detailStatusText, { color: selectedSeat.is_available ? '#009688' : (activeReservations[selectedSeat.id]?.status === 'unattended' ? '#E11D48' : '#374151') }]}>
-                  {selectedSeat.is_available ? 'Free' : (activeReservations[selectedSeat.id]?.status === 'unattended' ? 'Unattended' : (activeReservations[selectedSeat.id]?.status === 'pending' ? 'Reserved' : 'Occupied'))}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.detailTimeRow}>
-              <View style={styles.detailTimeBoxLeft}>
-                <Text style={styles.detailTimeLabel}>BOOKED AT</Text>
-                <Text style={styles.detailTimeValue}>
-                  {selectedSeat.is_available ? '--' : (activeReservations[selectedSeat.id] ? new Date(activeReservations[selectedSeat.id].created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Unknown')}
-                </Text>
-              </View>
-              <View style={styles.detailTimeBoxRight}>
-                <Text style={styles.detailAutoLabel}>AUTO-RELEASE CLOCK</Text>
-                <Text style={styles.detailAutoValue}>
-                  {selectedSeat.is_available ? '--' : (activeReservations[selectedSeat.id]?.status === 'pending' ? 'T - 15m\ngrace period' : '--')}
+              <View style={[styles.detailStatusBox, { backgroundColor: selectedSeat.is_blocked ? '#F3F4F6' : (!selectedSeat.reservation || selectedSeat.reservation.status === 'cancelled' ? '#EFFFFE' : '#FCE7F3') }]}>
+                <View style={[styles.detailStatusDot, { backgroundColor: selectedSeat.is_blocked ? '#9CA3AF' : (!selectedSeat.reservation || selectedSeat.reservation.status === 'cancelled' ? '#009688' : '#E11D48') }]} />
+                <Text style={[styles.detailStatusText, { color: selectedSeat.is_blocked ? '#9CA3AF' : (!selectedSeat.reservation || selectedSeat.reservation.status === 'cancelled' ? '#009688' : '#E11D48') }]}>
+                  {selectedSeat.is_blocked ? 'Blocked' : (!selectedSeat.reservation || selectedSeat.reservation.status === 'cancelled' ? 'Free' : selectedSeat.reservation.status.toUpperCase())}
                 </Text>
               </View>
             </View>
 
             <View style={styles.detailActionRow}>
-              <TouchableOpacity style={styles.detailBtnSecondary} disabled={selectedSeat.is_available}>
-                <Ionicons name="notifications-outline" size={16} color={selectedSeat.is_available ? "#9CA3AF" : "#009688"} style={{marginRight: 6}} />
-                <Text style={[styles.detailBtnSecondaryText, selectedSeat.is_available && {color: "#9CA3AF"}]}>Ping Patron</Text>
-              </TouchableOpacity>
               <TouchableOpacity 
-                style={[styles.detailBtnPrimary, selectedSeat.is_available && {backgroundColor: "#F87171"}]}
-                disabled={selectedSeat.is_available}
-                onPress={async () => {
-                  if (activeReservations[selectedSeat.id]) {
-                    setLoading(true);
-                    await releaseReservation(activeReservations[selectedSeat.id].id, 'seat', selectedSeat.id);
-                    await fetchSeats();
-                    setSelectedSeat(null);
-                  }
-                }}
+                style={[styles.detailBtnSecondary, selectedSeat.is_blocked && {borderColor: '#009688', backgroundColor: '#EFFFFE'}]}
+                onPress={() => handleBlock(selectedSeat)}
               >
-                <Ionicons name="log-out-outline" size={16} color={colors.white} style={{marginRight: 6}} />
-                <Text style={styles.detailBtnPrimaryText}>Release Carrel</Text>
+                <Ionicons name={selectedSeat.is_blocked ? "lock-open-outline" : "lock-closed-outline"} size={16} color="#009688" style={{marginRight: 6}} />
+                <Text style={styles.detailBtnSecondaryText}>{selectedSeat.is_blocked ? 'Unblock Seat' : 'Block Seat'}</Text>
               </TouchableOpacity>
+              
+              {selectedSeat.reservation && selectedSeat.reservation.status !== 'cancelled' ? (
+                <TouchableOpacity 
+                  style={styles.detailBtnPrimary}
+                  onPress={() => handleCancelRes(selectedSeat.reservation.id)}
+                >
+                  <Ionicons name="close-circle-outline" size={16} color={colors.white} style={{marginRight: 6}} />
+                  <Text style={styles.detailBtnPrimaryText}>Cancel Reservation</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity 
+                  style={[styles.detailBtnPrimary, {backgroundColor: '#4F46E5'}]}
+                  disabled={selectedSeat.is_blocked}
+                  onPress={() => alert('Manual walk-in assignment requires student ID scanning.')}
+                >
+                  <Ionicons name="person-add-outline" size={16} color={colors.white} style={{marginRight: 6}} />
+                  <Text style={styles.detailBtnPrimaryText}>Assign Walk-In</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         )}
@@ -345,32 +298,13 @@ const styles = StyleSheet.create({
 
   scrollContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl, paddingTop: spacing.md },
 
-  /* Node Pill */
-  nodePillRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
-  nodePill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EFFFFE', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
-  nodePillDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#009688', marginRight: 6 },
-  nodePillText: { fontSize: 10, fontWeight: '700', color: '#009688', letterSpacing: 0.5 },
-  filterBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center' },
-
-  /* Title */
   pageTitle: { fontSize: 22, fontWeight: '700', color: '#111827', marginBottom: 4 },
   pageSubtitle: { fontSize: 13, color: '#6B7280', marginBottom: spacing.lg },
 
-  /* Settings Card */
-  settingsCard: { backgroundColor: colors.white, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.lg, borderWidth: 1, borderColor: colors.border },
-  settingsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
-  settingIconBox: { width: 32, height: 32, borderRadius: radius.sm, backgroundColor: '#EFFFFE', justifyContent: 'center', alignItems: 'center', marginRight: spacing.sm },
-  settingTitle: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
-  settingSub: { fontSize: 11, color: '#6B7280' },
-  
-  settingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
-  settingRowLeft: { flexDirection: 'row', alignItems: 'center' },
-  settingRowLabel: { fontSize: 12, fontWeight: '600', color: '#4B5563' },
-  settingSpinner: { flexDirection: 'row', alignItems: 'center' },
-  settingSpinnerText: { fontSize: 12, fontWeight: '700', color: '#1F2937', marginRight: 4 },
-
-  alertBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EFFFFE', padding: spacing.sm, borderRadius: radius.sm, marginTop: 8 },
-  alertBannerText: { fontSize: 11, color: '#009688', flex: 1, lineHeight: 16 },
+  slotChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, backgroundColor: '#E5E7EB', borderWidth: 1, borderColor: 'transparent' },
+  slotChipActive: { backgroundColor: '#E0F2FE', borderColor: colors.primary },
+  slotText: { fontSize: 13, color: '#4B5563', fontWeight: '500' },
+  slotTextActive: { color: colors.primary, fontWeight: '700' },
 
   /* Stats Row */
   statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.xl },
@@ -378,11 +312,6 @@ const styles = StyleSheet.create({
   statBoxHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
   statBoxTitle: { fontSize: 10, fontWeight: '700', marginLeft: 4, letterSpacing: 0.5 },
   statBoxNumber: { fontSize: 24, fontWeight: '700', color: '#1F2937', textAlign: 'center' },
-
-  /* Grid Title */
-  gridTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: spacing.sm },
-  gridTitleMain: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
-  gridTitleSub: { fontSize: 12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', color: '#6B7280' },
 
   /* Legends */
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.lg },
@@ -394,10 +323,10 @@ const styles = StyleSheet.create({
   seatGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, justifyContent: 'center', marginBottom: spacing.xl },
   seatBox: { width: 56, height: 64, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   
-  seatFree: { backgroundColor: colors.white, borderWidth: 1, borderColor: '#009688' },
+  seatFree: { backgroundColor: colors.white, borderWidth: 1, borderColor: '#009688', justifyContent: 'center', alignItems: 'center', width: 56, height: 64, borderRadius: 12 },
   seatFreeText: { fontSize: 12, fontWeight: '700', color: '#009688', marginBottom: 4 },
   
-  seatOccupied: { backgroundColor: '#1E403F' },
+  seatOccupied: { backgroundColor: '#1E403F', justifyContent: 'center', alignItems: 'center', width: 56, height: 64, borderRadius: 12 },
   seatOccupiedText: { fontSize: 12, fontWeight: '700', color: colors.white, marginBottom: 4 },
 
   /* Detail Card */
@@ -413,15 +342,6 @@ const styles = StyleSheet.create({
   detailStatusBox: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, alignSelf: 'flex-start' },
   detailStatusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 4 },
   detailStatusText: { fontSize: 10, fontWeight: '700' },
-
-  detailTimeRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.lg },
-  detailTimeBoxLeft: { flex: 1, backgroundColor: '#F9FAFB', padding: spacing.sm, borderRadius: radius.sm },
-  detailTimeLabel: { fontSize: 9, fontWeight: '700', color: '#9CA3AF', letterSpacing: 0.5, marginBottom: 4 },
-  detailTimeValue: { fontSize: 13, fontWeight: '700', color: '#1F2937', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
-  
-  detailTimeBoxRight: { flex: 1, backgroundColor: '#FFFBEB', padding: spacing.sm, borderRadius: radius.sm },
-  detailAutoLabel: { fontSize: 9, fontWeight: '700', color: '#D97706', letterSpacing: 0.5, marginBottom: 4 },
-  detailAutoValue: { fontSize: 13, fontWeight: '700', color: '#B45309', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', lineHeight: 18 },
 
   detailActionRow: { flexDirection: 'row', gap: spacing.sm },
   detailBtnSecondary: { flex: 1, backgroundColor: colors.white, borderWidth: 1, borderColor: '#009688', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 10, borderRadius: radius.sm },

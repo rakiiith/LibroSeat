@@ -1,23 +1,42 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, spacing, typography, radius } from '../../theme/theme';
+import { fetchSeatsWithAvailability, TIME_SLOTS } from '../../services/seatReservationService';
 import { supabase } from '../../supabase/supabaseClient';
 
 export default function SeatAvailabilityScreen({ navigation }) {
   const [seats, setSeats] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // Date selection (Today or Tomorrow)
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  
+  const [selectedDate, setSelectedDate] = useState(today.toISOString().split('T')[0]);
+  const [selectedSlot, setSelectedSlot] = useState(TIME_SLOTS[0]);
 
   useEffect(() => {
-    fetchSeats();
-  }, []);
+    loadSeats();
+    
+    // Subscribe to realtime updates on seat_reservations
+    const channel = supabase
+      .channel('public:seat_reservations')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'seat_reservations' }, payload => {
+        loadSeats(); // Refresh when any reservation changes
+      })
+      .subscribe();
 
-  async function fetchSeats() {
+    return () => { supabase.removeChannel(channel); };
+  }, [selectedDate, selectedSlot]);
+
+  async function loadSeats() {
     setLoading(true);
     try {
-      const { data, error } = await supabase.from('seats').select('*').order('seat_number');
-      if (data) setSeats(data);
+      const data = await fetchSeatsWithAvailability(selectedDate, selectedSlot);
+      setSeats(data);
     } catch (e) {
       console.warn(e);
     } finally {
@@ -26,24 +45,36 @@ export default function SeatAvailabilityScreen({ navigation }) {
   }
 
   const renderItem = ({ item }) => {
+    let statusColor = '#10B981'; // Green (Available)
+    let statusText = 'Available';
+    let cardStyle = styles.card;
+    
+    if (item.is_blocked) {
+      statusColor = '#9CA3AF'; // Grey (Blocked)
+      statusText = 'Blocked';
+      cardStyle = [styles.card, { backgroundColor: '#F3F4F6' }];
+    } else if (!item.is_available) {
+      statusColor = '#EF4444'; // Red (Reserved/Occupied)
+      statusText = 'Reserved';
+      cardStyle = [styles.card, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }];
+    }
+
     return (
       <TouchableOpacity 
-        style={[styles.card, !item.is_available && styles.cardDisabled]}
+        style={cardStyle}
         disabled={!item.is_available}
-        onPress={() => navigation.navigate('SelectSeat', { seat: item })}
+        onPress={() => navigation.navigate('SelectSeat', { seat: item, date: selectedDate, slot: selectedSlot })}
       >
-        <View style={styles.iconBox}>
-          <MaterialCommunityIcons name="table-chair" size={24} color={item.is_available ? colors.primary : '#9CA3AF'} />
+        <View style={[styles.iconBox, { backgroundColor: item.is_available ? '#EFFFFE' : (item.is_blocked ? '#E5E7EB' : '#FEE2E2') }]}>
+          <MaterialCommunityIcons name="table-chair" size={24} color={statusColor} />
         </View>
         <View style={styles.info}>
-          <Text style={[styles.title, !item.is_available && { color: '#9CA3AF' }]}>Carrel {item.seat_number}</Text>
-          <Text style={styles.subtitle}>{item.room}</Text>
+          <Text style={[styles.title, !item.is_available && { color: statusColor }]}>Carrel {item.seat_number}</Text>
+          <Text style={styles.subtitle}>{item.zone || 'General'}</Text>
         </View>
         <View style={styles.statusBox}>
-          <View style={[styles.dot, { backgroundColor: item.is_available ? '#10B981' : '#EF4444' }]} />
-          <Text style={[styles.statusText, { color: item.is_available ? '#10B981' : '#EF4444' }]}>
-            {item.is_available ? 'Available' : 'Occupied'}
-          </Text>
+          <View style={[styles.dot, { backgroundColor: statusColor }]} />
+          <Text style={[styles.statusText, { color: statusColor }]}>{statusText}</Text>
         </View>
       </TouchableOpacity>
     );
@@ -52,12 +83,39 @@ export default function SeatAvailabilityScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Available Seats</Text>
-        <TouchableOpacity onPress={fetchSeats}>
-          <Ionicons name="refresh" size={24} color={colors.primary} />
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Book a Seat</Text>
       </View>
       
+      <View style={styles.filters}>
+        <View style={styles.dateTabs}>
+          <TouchableOpacity 
+            style={[styles.dateTab, selectedDate === today.toISOString().split('T')[0] && styles.dateTabActive]}
+            onPress={() => setSelectedDate(today.toISOString().split('T')[0])}
+          >
+            <Text style={[styles.dateTabText, selectedDate === today.toISOString().split('T')[0] && styles.dateTabTextActive]}>Today</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.dateTab, selectedDate === tomorrow.toISOString().split('T')[0] && styles.dateTabActive]}
+            onPress={() => setSelectedDate(tomorrow.toISOString().split('T')[0])}
+          >
+            <Text style={[styles.dateTabText, selectedDate === tomorrow.toISOString().split('T')[0] && styles.dateTabTextActive]}>Tomorrow</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.filterLabel}>Select Time Slot:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.slotScroll}>
+          {TIME_SLOTS.map(slot => (
+            <TouchableOpacity 
+              key={slot.id} 
+              style={[styles.slotChip, selectedSlot.id === slot.id && styles.slotChipActive]}
+              onPress={() => setSelectedSlot(slot)}
+            >
+              <Text style={[styles.slotText, selectedSlot.id === slot.id && styles.slotTextActive]}>{slot.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
       {loading ? (
         <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: spacing.xl }} />
       ) : (
@@ -66,6 +124,7 @@ export default function SeatAvailabilityScreen({ navigation }) {
           data={seats}
           keyExtractor={item => item.id.toString()}
           renderItem={renderItem}
+          ListEmptyComponent={<Text style={{textAlign: 'center', marginTop: 20}}>No seats found.</Text>}
         />
       )}
     </SafeAreaView>
@@ -74,20 +133,31 @@ export default function SeatAvailabilityScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.white },
+  header: { padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.white },
   headerTitle: { ...typography.h1 },
+  filters: { backgroundColor: colors.white, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  dateTabs: { flexDirection: 'row', marginBottom: spacing.md, backgroundColor: '#F3F4F6', borderRadius: 8, padding: 4 },
+  dateTab: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 6 },
+  dateTabActive: { backgroundColor: colors.white, shadowColor: '#000', shadowOffset: {width: 0, height: 1}, shadowOpacity: 0.1, shadowRadius: 2, elevation: 2 },
+  dateTabText: { fontSize: 14, fontWeight: '600', color: colors.textMuted },
+  dateTabTextActive: { color: colors.primary },
+  filterLabel: { fontSize: 13, color: colors.textMuted, marginBottom: 8, fontWeight: '600' },
+  slotScroll: { gap: 8 },
+  slotChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: 'transparent' },
+  slotChipActive: { backgroundColor: '#E0F2FE', borderColor: colors.primary },
+  slotText: { fontSize: 13, color: colors.textMuted, fontWeight: '500' },
+  slotTextActive: { color: colors.primary, fontWeight: '700' },
   list: { padding: spacing.md },
   card: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: colors.white, 
     padding: spacing.md, borderRadius: radius.md, marginBottom: spacing.md,
     borderWidth: 1, borderColor: colors.border
   },
-  cardDisabled: { backgroundColor: '#F9FAFB' },
-  iconBox: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#EFFFFE', justifyContent: 'center', alignItems: 'center', marginRight: spacing.md },
+  iconBox: { width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center', marginRight: spacing.md },
   info: { flex: 1 },
   title: { ...typography.h2, color: colors.text, marginBottom: 2 },
   subtitle: { ...typography.body, color: colors.textMuted },
-  statusBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
+  statusBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB' },
   dot: { width: 6, height: 6, borderRadius: 3, marginRight: 4 },
   statusText: { fontSize: 10, fontWeight: '700' }
 });

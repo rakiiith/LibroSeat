@@ -40,7 +40,7 @@ export default function SignUpScreen({ navigation }) {
     ]).start();
   };
 
-  const canSubmit = fullName.trim() && studentId.trim() && isValidEmail(email) && password.length >= 6 && agreed;
+  const canSubmit = fullName.trim() && studentId.trim() && isValidEmail(email.trim()) && password.length >= 6 && agreed;
 
   const handleSignUp = async () => {
     if (!fullName.trim() || !studentId.trim()) {
@@ -48,7 +48,7 @@ export default function SignUpScreen({ navigation }) {
       runShake();
       return;
     }
-    if (!isValidEmail(email)) {
+    if (!isValidEmail(email.trim())) {
       setError('Please enter a valid email address.');
       runShake();
       return;

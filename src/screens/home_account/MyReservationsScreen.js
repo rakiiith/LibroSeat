@@ -1,112 +1,151 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, typography } from '../../theme/theme';
-import { Card, StatusBadge, EmptyState } from '../../components/UIKit';
-import { useCurrentUserId } from '../../hooks/useCurrentUserId';
-import { subscribeToReservations } from './accountService';
-import { formatDateTime } from '../../hooks/formatDate';
-
-const ACTIVE_STATUSES = ['confirmed'];
-const PAST_STATUSES = ['collected', 'cancelled', 'expired'];
-
-const STATUS_TONE = {
-  confirmed: 'success',
-  collected: 'neutral',
-  cancelled: 'danger',
-  expired: 'warning',
-};
+import { Card, EmptyState, PrimaryButton, OutlineButton } from '../../components/UIKit';
+import { supabase } from '../../supabase/supabaseClient';
+import { getStudentSeatReservations, updateSeatReservationStatus } from '../../services/seatReservationService';
 
 export default function MyReservationsScreen({ navigation }) {
-  const userId = useCurrentUserId();
+  const [userId, setUserId] = useState(null);
   const [reservations, setReservations] = useState([]);
-  const [tab, setTab] = useState('active');
+  const [loading, setLoading] = useState(true);
+  const [now, setNow] = useState(new Date());
 
   useEffect(() => {
-    // Wait for a real user id — never subscribe with null/undefined.
-    if (!userId) return;
-
-    // `active` stops late callbacks from updating state after unmount.
-    let active = true;
-    const unsubscribe = subscribeToReservations(userId, (items) => {
-      if (active) setReservations(items);
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) {
+        setUserId(user.id);
+        fetchRes(user.id);
+      }
     });
 
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [userId]);
+    // Update 'now' every minute to evaluate check-in buttons
+    const interval = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(interval);
+  }, []);
 
-  const filtered = reservations.filter((r) =>
-    tab === 'active' ? ACTIVE_STATUSES.includes(r.status) : PAST_STATUSES.includes(r.status)
-  );
+  async function fetchRes(uid) {
+    try {
+      setLoading(true);
+      const data = await getStudentSeatReservations(uid);
+      setReservations(data);
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAction(resId, newStatus) {
+    try {
+      await updateSeatReservationStatus(resId, newStatus);
+      if (userId) fetchRes(userId);
+    } catch (e) {
+      Alert.alert("Error", "Could not update reservation.");
+    }
+  }
+
+  const renderItem = ({ item }) => {
+    const resDate = new Date(`${item.reservation_date}T${item.start_time}`);
+    const resEnd = new Date(`${item.reservation_date}T${item.end_time}`);
+    
+    // Check-in allowed from start_time up to start_time + 15 mins
+    const checkInDeadline = new Date(resDate);
+    checkInDeadline.setMinutes(checkInDeadline.getMinutes() + 15);
+
+    const isBeforeStart = now < resDate;
+    const canCheckIn = now >= resDate && now <= checkInDeadline;
+    
+    // Status colors
+    let statusColor = '#0284C7'; // reserved
+    if (item.status === 'checked_in') statusColor = '#10B981';
+    else if (item.status === 'cancelled') statusColor = '#9CA3AF';
+    else if (item.status === 'no_show') statusColor = '#E11D48';
+    else if (item.status === 'completed') statusColor = '#4F46E5';
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardInfo}>
+            <Text style={styles.seatNum}>Carrel {item.seats?.seat_number}</Text>
+            <Text style={styles.zone}>{item.seats?.zone || 'General'}</Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: statusColor + '22' }]}>
+            <Text style={[styles.statusText, { color: statusColor }]}>{item.status.replace('_', ' ').toUpperCase()}</Text>
+          </View>
+        </View>
+        
+        <View style={styles.timeRow}>
+          <Ionicons name="calendar-outline" size={16} color={colors.textMuted} />
+          <Text style={styles.timeText}>{item.reservation_date} | {item.start_time.substring(0,5)} - {item.end_time.substring(0,5)}</Text>
+        </View>
+
+        {item.status === 'reserved' && (
+          <View style={styles.actionRow}>
+            {isBeforeStart ? (
+              <OutlineButton 
+                title="Cancel Reservation" 
+                onPress={() => handleAction(item.id, 'cancelled')} 
+                style={styles.actionBtn} 
+              />
+            ) : null}
+            
+            {canCheckIn ? (
+              <PrimaryButton 
+                title="Check In Now" 
+                onPress={() => handleAction(item.id, 'checked_in')} 
+                style={styles.actionBtn} 
+              />
+            ) : null}
+            
+            {!isBeforeStart && !canCheckIn ? (
+              <Text style={{color: '#E11D48', fontSize: 13}}>Check-in period expired.</Text>
+            ) : null}
+          </View>
+        )}
+      </View>
+    );
+  };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <View style={styles.tabRow}>
-        <TabButton label="Active" active={tab === 'active'} onPress={() => setTab('active')} />
-        <TabButton label="Past" active={tab === 'past'} onPress={() => setTab('past')} />
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>My Seat Reservations</Text>
+        <TouchableOpacity onPress={() => userId && fetchRes(userId)}>
+          <Ionicons name="refresh" size={24} color={colors.primary} />
+        </TouchableOpacity>
       </View>
 
-      <FlatList
-        contentContainerStyle={styles.container}
-        data={filtered}
-        keyExtractor={(item) => item.id}
-        ListEmptyComponent={<EmptyState message={`No ${tab} reservations.`} />}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            onPress={() => navigation.navigate('ReservationDetail', { reservationId: item.id })}
-          >
-            <Card>
-              <View style={styles.row}>
-                <Ionicons
-                  name={item.type === 'seat' ? 'grid-outline' : 'book-outline'}
-                  size={22}
-                  color={colors.primary}
-                  style={{ marginRight: spacing.sm }}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={typography.body}>
-                    {item.type === 'seat' ? 'Seat reservation' : 'Book reservation'}
-                  </Text>
-                  <Text style={typography.muted}>{formatDateTime(item.createdAt)}</Text>
-                </View>
-                <StatusBadge label={item.status} tone={STATUS_TONE[item.status] || 'neutral'} />
-              </View>
-            </Card>
-          </TouchableOpacity>
-        )}
-      />
+      {loading ? (
+        <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: spacing.xl }} />
+      ) : (
+        <FlatList
+          contentContainerStyle={styles.container}
+          data={reservations}
+          keyExtractor={(item) => item.id}
+          ListEmptyComponent={<EmptyState message="You have no seat reservations." />}
+          renderItem={renderItem}
+        />
+      )}
     </SafeAreaView>
-  );
-}
-
-function TabButton({ label, active, onPress }) {
-  return (
-    <TouchableOpacity style={[styles.tabButton, active && styles.tabButtonActive]} onPress={onPress}>
-      <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{label}</Text>
-    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  container: { padding: spacing.lg, flexGrow: 1 },
-  tabRow: {
-    flexDirection: 'row',
-    marginTop: spacing.md,
-    marginHorizontal: spacing.lg,
-    backgroundColor: colors.card,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-  },
-  tabButton: { flex: 1, paddingVertical: 10, alignItems: 'center' },
-  tabButtonActive: { backgroundColor: colors.primary },
-  tabLabel: { color: colors.textMuted, fontWeight: '600' },
-  tabLabelActive: { color: colors.white },
-  row: { flexDirection: 'row', alignItems: 'center' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.white },
+  headerTitle: { ...typography.h1 },
+  container: { padding: spacing.md },
+  card: { backgroundColor: colors.white, padding: spacing.md, borderRadius: radius.md, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
+  seatNum: { ...typography.h2, color: colors.text },
+  zone: { ...typography.body, color: colors.textMuted },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
+  statusText: { fontSize: 10, fontWeight: '700' },
+  timeRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.xs, marginBottom: spacing.md },
+  timeText: { marginLeft: 6, fontSize: 14, color: colors.text },
+  actionRow: { flexDirection: 'row', gap: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md },
+  actionBtn: { flex: 1 }
 });

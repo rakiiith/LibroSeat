@@ -171,3 +171,37 @@ create policy "Staff manage all notifications"
   to authenticated
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'staff'))
   with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'staff'));
+-- ============================================================
+-- 6. ADVANCED SEAT RESERVATION SYSTEM
+-- ============================================================
+
+-- A. Update the existing seats table to match the new requirements
+ALTER TABLE public.seats RENAME COLUMN room TO zone;
+ALTER TABLE public.seats RENAME COLUMN is_available TO is_blocked;
+ALTER TABLE public.seats ALTER COLUMN is_blocked SET DEFAULT false;
+UPDATE public.seats SET is_blocked = false;
+ALTER TABLE public.seats ADD CONSTRAINT unique_seat_number UNIQUE (seat_number);
+
+-- B. Create a dedicated seat_reservations table (separate from books to avoid breaking existing book features)
+CREATE TABLE IF NOT EXISTS public.seat_reservations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  seat_id uuid NOT NULL REFERENCES public.seats(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  reservation_date date NOT NULL,
+  start_time time NOT NULL,
+  end_time time NOT NULL,
+  status text NOT NULL DEFAULT 'reserved' CHECK (status IN ('reserved', 'checked_in', 'completed', 'cancelled', 'no_show')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT unique_seat_timeslot UNIQUE (seat_id, reservation_date, start_time)
+);
+
+ALTER TABLE public.seat_reservations ENABLE ROW LEVEL SECURITY;
+
+-- C. Row Level Security Policies for seat_reservations
+CREATE POLICY "Students read all seat reservations" ON public.seat_reservations FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Students create own seat reservations" ON public.seat_reservations FOR INSERT TO authenticated WITH CHECK (auth.uid() = student_id);
+CREATE POLICY "Students cancel own seat reservations" ON public.seat_reservations FOR UPDATE TO authenticated USING (auth.uid() = student_id) WITH CHECK (auth.uid() = student_id);
+CREATE POLICY "Staff manage all seat reservations" ON public.seat_reservations FOR ALL TO authenticated 
+  USING (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'staff'));
+
