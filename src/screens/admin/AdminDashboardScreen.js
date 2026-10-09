@@ -120,9 +120,7 @@ export default function AdminDashboardScreen({ navigation }) {
               <Ionicons name="checkmark-circle-outline" size={14} color={colors.white} />
               <Text style={styles.holdingsCheckText}>94% cataloged & shelved</Text>
             </View>
-            <View style={styles.outTodayPill}>
-              <Text style={styles.outTodayText}>14 out today</Text>
-            </View>
+            {/* Removed dummy 14 out today pill */}
           </View>
         </View>
 
@@ -143,7 +141,7 @@ export default function AdminDashboardScreen({ navigation }) {
               <Text style={styles.tileNumber}>{stats.activeHolds}</Text>
             )}
             <Text style={styles.tileLabel}>Active holds</Text>
-            <Text style={styles.tileFooterGreen}>{stats.pendingPickup} pending pickup</Text>
+            {/* Removed dummy pending pickup text */}
           </View>
 
           <View style={[styles.smallTile, { backgroundColor: '#FFF0F0' }]}>
@@ -161,7 +159,7 @@ export default function AdminDashboardScreen({ navigation }) {
               <Text style={[styles.tileNumber, { color: colors.danger }]}>{stats.unattendedSeats}</Text>
             )}
             <Text style={[styles.tileLabel, { color: colors.danger }]}>Unattended seats</Text>
-            <Text style={styles.tileFooterRed}>{'>'} 30m idle session</Text>
+            {/* Removed dummy idle session text */}
           </View>
         </View>
 
@@ -248,15 +246,8 @@ export default function AdminDashboardScreen({ navigation }) {
             <Text style={styles.feedRightText}>Auto-sync</Text>
           </View>
 
-          <View style={styles.feedItem}>
-            <View style={[styles.feedDot, { backgroundColor: colors.primary }]} />
-            <Text style={styles.feedItemText} numberOfLines={1}>Return: "Principles of Quantum Mechanics"</Text>
-            <Text style={styles.feedTimeText}>2m ago</Text>
-          </View>
-          <View style={styles.feedItem}>
-            <View style={[styles.feedDot, { backgroundColor: '#90A4AE' }]} />
-            <Text style={styles.feedItemText} numberOfLines={1}>Seat C-12 vacated by Patron #4409</Text>
-            <Text style={styles.feedTimeText}>14m ago</Text>
+          <View style={[styles.feedItem, { justifyContent: 'center', marginTop: 10 }]}>
+            <Text style={{ color: colors.textMuted, fontSize: 13, fontStyle: 'italic' }}>No recent activity.</Text>
           </View>
         </View>
 
