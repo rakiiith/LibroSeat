@@ -1,29 +1,29 @@
-// Staff/Admin bottom tabs: Home, Books, Manage, Profile (matches Figma "24").
+// Staff/Admin bottom tabs: Dashboard, Inventory, Reservations, Seats
 
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Ionicons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors } from '../theme/theme';
 
 import AdminDashboardScreen from '../screens/admin/AdminDashboardScreen';
 import ManageInventoryScreen from '../screens/admin/ManageInventoryScreen';
 import ManageReservationsScreen from '../screens/admin/ManageReservationsScreen';
-import StaffProfileScreen from '../screens/admin/StaffProfileScreen';
+import SeatAllocationScreen from '../screens/admin/SeatAllocationScreen';
 
 const Tab = createBottomTabNavigator();
 
 const ICONS = {
-  AdminHome: ['home', 'home-outline'],
-  Books: ['book', 'book-outline'],
-  Manage: ['list', 'list-outline'],
-  StaffProfile: ['person', 'person-outline'],
+  AdminHome: ['view-dashboard', 'view-dashboard-outline'],
+  Inventory: ['archive', 'archive-outline'],
+  Reservations: ['calendar-check', 'calendar-check-outline'],
+  Seats: ['sofa-single', 'sofa-single-outline'],
 };
 
 const LABELS = {
-  AdminHome: 'Home',
-  Books: 'Books',
-  Manage: 'Manage',
-  StaffProfile: 'Profile',
+  AdminHome: 'Dashboard',
+  Inventory: 'Inventory',
+  Reservations: 'Reservations',
+  Seats: 'Seats',
 };
 
 export default function AdminTabs() {
@@ -35,18 +35,18 @@ export default function AdminTabs() {
         tabBarLabel: LABELS[route.name],
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarLabelStyle: { fontSize: 10, fontWeight: '600' },
-        tabBarStyle: { backgroundColor: colors.white, borderTopColor: colors.border },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
+        tabBarStyle: { backgroundColor: colors.white, borderTopColor: colors.border, height: 60, paddingBottom: 8, paddingTop: 8 },
         tabBarIcon: ({ focused, color, size }) => {
           const [active, inactive] = ICONS[route.name];
-          return <Ionicons name={focused ? active : inactive} size={size} color={color} />;
+          return <MaterialCommunityIcons name={focused ? active : inactive} size={24} color={color} />;
         },
       })}
     >
       <Tab.Screen name="AdminHome" component={AdminDashboardScreen} />
-      <Tab.Screen name="Books" component={ManageInventoryScreen} />
-      <Tab.Screen name="Manage" component={ManageReservationsScreen} />
-      <Tab.Screen name="StaffProfile" component={StaffProfileScreen} />
+      <Tab.Screen name="Inventory" component={ManageInventoryScreen} />
+      <Tab.Screen name="Reservations" component={ManageReservationsScreen} />
+      <Tab.Screen name="Seats" component={SeatAllocationScreen} />
     </Tab.Navigator>
   );
 }
