@@ -1,24 +1,8 @@
-# Dependencies
 node_modules/
-
-# Expo
-.expo/
-.expo-shared/
-dist/
-web-build/
-
-# Logs
-*.log
-
-# Environment variables / secrets
+**/node_modules/
 .env
 .env.*
 !.env.example
-
-# Generated / temporary files
-structure.txt
-
-# macOS / IDE
-.DS_Store
-.vscode/
-.idea/
+dist/
+build/
+.expo/
