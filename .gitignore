@@ -21,4 +21,5 @@ structure.txt
 # macOS / IDE
 .DS_Store
 .vscode/
-.idea/
+.idea/**/node_modules/
+build/
