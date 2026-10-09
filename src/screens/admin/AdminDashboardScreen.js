@@ -73,8 +73,6 @@ export default function AdminDashboardScreen({ navigation }) {
             </View>
           </View>
           <View style={styles.headerIcons}>
-            <Ionicons name="search-outline" size={22} color={colors.text} style={styles.iconMargin} />
-            <Ionicons name="barcode-outline" size={22} color={colors.text} style={styles.iconMargin} />
             <View style={styles.profileAvatar}>
               <Ionicons name="person" size={14} color={colors.white} />
             </View>

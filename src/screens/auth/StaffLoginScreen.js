@@ -17,8 +17,8 @@ import { PrimaryButton, OutlineButton } from '../../components/UIKit';
 import { signInStaff } from '../../supabase/authService';
 
 export default function StaffLoginScreen({ navigation }) {
-  const [staffId, setStaffId] = useState('admin');
-  const [password, setPassword] = useState('admin');
+  const [staffId, setStaffId] = useState('admin@libroseat.com');
+  const [password, setPassword] = useState('password123');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);
   const [error, setError] = useState('');
@@ -42,7 +42,7 @@ export default function StaffLoginScreen({ navigation }) {
     }
     
     // HARDCODED CREDENTIAL
-    if (staffId.trim().toLowerCase() === 'admin' && password === 'admin') {
+    if (staffId.trim().toLowerCase() === 'admin@libroseat.com' && password === 'password123') {
       navigation.reset({ index: 0, routes: [{ name: 'AdminDashboard' }] });
       return;
     }
