@@ -1,32 +1,20 @@
 import React, { useRef, useState } from 'react';
 import {
-  Animated,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
+  View,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  StyleSheet,
+  Animated,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { colors, spacing, typography } from '../../theme/theme';
+import { PrimaryButton, OutlineButton } from '../../components/UIKit';
 import { signInStudent } from '../../supabase/authService';
-import { OutlineButton, PrimaryButton } from '../../components/UIKit';
-import { colors, radius, spacing, typography } from '../../theme/theme';
-
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function friendlyLoginError(code) {
-  if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found'].includes(code)) {
-    return 'Incorrect email or password. Please try again.';
-  }
-  if (code === 'auth/too-many-requests') {
-    return 'Too many attempts - please wait a moment and try again.';
-  }
-  return 'Could not log in. Please try again.';
-}
 
 export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
@@ -37,27 +25,28 @@ export default function LoginScreen({ navigation }) {
   const shake = useRef(new Animated.Value(0)).current;
 
   const runShake = () => {
-    shake.setValue(0);
     Animated.sequence([
-      Animated.timing(shake, { toValue: 8, duration: 45, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: -8, duration: 45, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: 0, duration: 45, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 8, duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: -8, duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 6, duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 0, duration: 60, useNativeDriver: true }),
     ]).start();
   };
 
-  const handleSubmit = async () => {
-    if (!email.trim() || !password || !emailPattern.test(email.trim())) {
-      setError('Enter your student email and password to continue.');
+  const handleLogin = async () => {
+    if (!email.trim() || !password) {
+      setError('Please enter your email and password.');
       runShake();
       return;
     }
     setLoading(true);
     setError('');
     try {
-      await signInStudent(email.trim(), password);
+      await signInStudent(email, password);
       navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
     } catch (e) {
-      setError(e.code === 'auth/not-student' ? 'This account is not registered as a student. Try Staff Login instead.' : friendlyLoginError(e.code));
+      console.warn('Student login failed:', e.message);
+      setError('Incorrect email or password. Please try again.');
       runShake();
     } finally {
       setLoading(false);
@@ -66,104 +55,88 @@ export default function LoginScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.container}>
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Log in to continue as a student</Text>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <Animated.View style={[styles.container, { transform: [{ translateX: shake }] }]}>
+          <Ionicons name="lock-closed-outline" size={32} color={colors.primary} style={styles.icon} />
+          <Text style={typography.title}>Welcome Back</Text>
+          <Text style={typography.muted}>Log in to continue as a student</Text>
 
-          <Animated.View style={{ transform: [{ translateX: shake }] }}>
-            <Field
-              icon="mail-outline"
-              placeholder="Student Email or ID"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            <View style={styles.passwordHeader}>
-              <Text style={styles.passwordLabel}>Password</Text>
-              <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
-                <Text style={styles.link}>Forgot Password?</Text>
-              </TouchableOpacity>
-            </View>
-            <Field
-              icon="lock-closed-outline"
-              placeholder="Password"
+          <Text style={styles.label}>Student Email or ID</Text>
+          <TextInput
+            value={email}
+            onChangeText={setEmail}
+            placeholder="sanduni@university.edu"
+            style={styles.input}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            textContentType="emailAddress"
+            autoComplete="email"
+          />
+
+          <View style={styles.labelRow}>
+            <Text style={styles.label}>Password</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
+              <Text style={styles.link}>Forgot Password?</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.passwordRow}>
+            <TextInput
               value={password}
               onChangeText={setPassword}
+              placeholder="••••••••"
               secureTextEntry={!showPassword}
-              rightIcon={showPassword ? 'eye-off-outline' : 'eye-outline'}
-              onRightPress={() => setShowPassword((current) => !current)}
+              style={[styles.input, { flex: 1, marginBottom: 0 }]}
+              autoCapitalize="none"
+              textContentType="password"
+              autoComplete="password"
             />
-          </Animated.View>
+            <TouchableOpacity onPress={() => setShowPassword((s) => !s)} style={styles.eyeButton}>
+              <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          <PrimaryButton title="Log In" onPress={handleSubmit} disabled={loading} loading={loading} />
-
-          <View style={styles.dividerRow}>
-            <View style={styles.divider} />
-            <Text style={styles.orText}>or</Text>
-            <View style={styles.divider} />
+          <View style={{ marginTop: spacing.md }}>
+            {loading ? (
+              <ActivityIndicator color={colors.primary} />
+            ) : (
+              <PrimaryButton title="Log In" onPress={handleLogin} />
+            )}
           </View>
 
-          <OutlineButton title="Log in as Admin" onPress={() => navigation.navigate('StaffLogin')} disabled={loading} />
+          <Text style={styles.orText}>or</Text>
 
-          <Text style={styles.footer}>
-            Don't have an account?{' '}
-            <Text style={styles.link} onPress={() => navigation.navigate('SignUp')}>
-              Sign Up
+          <OutlineButton title="Log in as Admin" onPress={() => navigation.navigate('StaffLogin')} />
+
+          <TouchableOpacity onPress={() => navigation.navigate('SignUp')} style={{ marginTop: spacing.lg }}>
+            <Text style={typography.muted}>
+              Don't have an account? <Text style={styles.link}>Sign Up</Text>
             </Text>
-          </Text>
-        </ScrollView>
+          </TouchableOpacity>
+        </Animated.View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-function Field({ icon, rightIcon, onRightPress, ...props }) {
-  return (
-    <View style={styles.inputWrap}>
-      <Ionicons name={icon} size={20} color={colors.textMuted} />
-      <TextInput style={styles.input} placeholderTextColor={colors.textMuted} {...props} />
-      {rightIcon ? (
-        <TouchableOpacity onPress={onRightPress}>
-          <Ionicons name={rightIcon} size={20} color={colors.textMuted} />
-        </TouchableOpacity>
-      ) : null}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  flex: { flex: 1 },
-  container: { padding: spacing.lg, paddingTop: spacing.xl, gap: spacing.md },
-  title: { ...typography.title, fontSize: 28 },
-  subtitle: { ...typography.muted, fontSize: 15, marginBottom: spacing.sm },
-  inputWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
+  container: { flex: 1, justifyContent: 'center', padding: spacing.lg },
+  icon: { alignSelf: 'center', marginBottom: spacing.sm },
+  label: { ...typography.muted, marginTop: spacing.md, marginBottom: spacing.xs },
+  labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: spacing.md },
+  input: {
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.md,
+    borderRadius: 10,
+    padding: spacing.md,
     backgroundColor: colors.card,
   },
-  input: { flex: 1, paddingVertical: 14, color: colors.text },
-  passwordHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
-  passwordLabel: { ...typography.muted, fontWeight: '700' },
-  error: { color: colors.danger, fontSize: 13 },
-  link: { color: colors.primary, fontWeight: '700' },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  divider: { flex: 1, height: 1, backgroundColor: colors.border },
-  orText: { ...typography.muted },
-  footer: { ...typography.muted, textAlign: 'center', marginTop: spacing.sm },
+  passwordRow: { flexDirection: 'row', alignItems: 'center' },
+  eyeButton: { padding: spacing.sm },
+  link: { color: colors.primary, fontWeight: '600' },
+  error: { color: colors.danger, marginTop: spacing.sm },
+  orText: { textAlign: 'center', color: colors.textMuted, marginVertical: spacing.md },
 });

@@ -1,88 +1,75 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
+  View,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  StyleSheet,
+  Animated,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { createStudentAccount } from '../../supabase/authService';
+import { colors, spacing, typography } from '../../theme/theme';
 import { PrimaryButton } from '../../components/UIKit';
-import { colors, radius, spacing, typography } from '../../theme/theme';
+import { signUpStudent } from '../../supabase/authService';
 
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function friendlySignUpError(code) {
-  if (code === 'auth/email-already-in-use') return 'An account with this email already exists.';
-  if (code === 'auth/weak-password') return 'Password should be at least 6 characters.';
-  if (code === 'auth/invalid-email') return 'Enter a valid email address.';
-  return 'Could not create your account. Please try again.';
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 export default function SignUpScreen({ navigation }) {
-  const [form, setForm] = useState({ fullName: '', studentId: '', email: '', password: '' });
-  const [accepted, setAccepted] = useState(false);
+  const [fullName, setFullName] = useState('');
+  const [studentId, setStudentId] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const shake = useRef(new Animated.Value(0)).current;
 
-  const isValid = useMemo(
-    () =>
-      form.fullName.trim() &&
-      form.studentId.trim() &&
-      emailPattern.test(form.email.trim()) &&
-      form.password.length >= 6 &&
-      accepted,
-    [accepted, form]
-  );
-
-  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
-
   const runShake = () => {
-    shake.setValue(0);
     Animated.sequence([
-      Animated.timing(shake, { toValue: 8, duration: 45, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: -8, duration: 45, useNativeDriver: true }),
-      Animated.timing(shake, { toValue: 0, duration: 45, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 8, duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: -8, duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 6, duration: 60, useNativeDriver: true }),
+      Animated.timing(shake, { toValue: 0, duration: 60, useNativeDriver: true }),
     ]).start();
   };
 
-  const validate = () => {
-    if (!form.fullName.trim()) return 'Full name is required.';
-    if (!form.studentId.trim()) return 'Student ID is required.';
-    if (!emailPattern.test(form.email.trim())) return 'Enter a valid email address.';
-    if (form.password.length < 6) return 'Password must be at least 6 characters.';
-    if (!accepted) return 'Please agree to the Terms & Conditions and Privacy Policy.';
-    return '';
-  };
+  const canSubmit = fullName.trim() && studentId.trim() && isValidEmail(email) && password.length >= 6 && agreed;
 
-  const handleSubmit = async () => {
-    const validationError = validate();
-    if (validationError) {
-      setError(validationError);
+  const handleSignUp = async () => {
+    if (!fullName.trim() || !studentId.trim()) {
+      setError('Please fill in your name and student ID.');
+      runShake();
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setError('Please enter a valid email address.');
+      runShake();
+      return;
+    }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
       runShake();
       return;
     }
     setLoading(true);
     setError('');
     try {
-      await createStudentAccount({
-        fullName: form.fullName.trim(),
-        studentId: form.studentId.trim(),
-        email: form.email.trim(),
-        password: form.password,
-      });
+      await signUpStudent(fullName, studentId, email, password);
       navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
     } catch (e) {
-      setError(friendlySignUpError(e.code));
+      console.warn('Sign up failed:', e.message);
+      if (e.message?.toLowerCase().includes('already registered')) {
+        setError('An account with this email already exists.');
+      } else {
+        setError(e.message || 'Could not create your account. Please try again.');
+      }
       runShake();
     } finally {
       setLoading(false);
@@ -91,111 +78,110 @@ export default function SignUpScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.container}>
-          <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>Sign up to start reserving books & seats</Text>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <Animated.View style={[styles.container, { transform: [{ translateX: shake }] }]}>
+          <Ionicons name="lock-closed-outline" size={32} color={colors.primary} style={styles.icon} />
+          <Text style={typography.title}>Create Account</Text>
+          <Text style={typography.muted}>Sign up to start reserving books & seats</Text>
 
-          <Animated.View style={{ transform: [{ translateX: shake }] }}>
-            <Field icon="person-outline" placeholder="Full Name" value={form.fullName} onChangeText={(v) => setField('fullName', v)} />
-            <Field icon="id-card-outline" placeholder="Student ID" value={form.studentId} onChangeText={(v) => setField('studentId', v)} />
-            <Field
-              icon="mail-outline"
-              placeholder="Email"
-              value={form.email}
-              onChangeText={(v) => setField('email', v)}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            <Field
-              icon="lock-closed-outline"
-              placeholder="Password"
-              value={form.password}
-              onChangeText={(v) => setField('password', v)}
+          <Text style={styles.label}>Full Name</Text>
+          <TextInput
+            value={fullName}
+            onChangeText={setFullName}
+            placeholder="Sanduni Wickramasinghe"
+            style={styles.input}
+            textContentType="name"
+            autoComplete="name"
+          />
+
+          <Text style={styles.label}>Student ID</Text>
+          <TextInput
+            value={studentId}
+            onChangeText={setStudentId}
+            placeholder="2021CS045"
+            style={styles.input}
+            autoCapitalize="characters"
+          />
+
+          <Text style={styles.label}>Email</Text>
+          <TextInput
+            value={email}
+            onChangeText={setEmail}
+            placeholder="sanduni@university.edu"
+            style={styles.input}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            textContentType="emailAddress"
+            autoComplete="email"
+          />
+
+          <Text style={styles.label}>Password</Text>
+          <View style={styles.passwordRow}>
+            <TextInput
+              value={password}
+              onChangeText={setPassword}
+              placeholder="••••••••"
               secureTextEntry={!showPassword}
-              rightIcon={showPassword ? 'eye-off-outline' : 'eye-outline'}
-              onRightPress={() => setShowPassword((current) => !current)}
+              style={[styles.input, { flex: 1, marginBottom: 0 }]}
+              autoCapitalize="none"
+              textContentType="newPassword"
+              autoComplete="password-new"
             />
-          </Animated.View>
+            <TouchableOpacity onPress={() => setShowPassword((s) => !s)} style={styles.eyeButton}>
+              <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
 
-          <TouchableOpacity style={styles.checkboxRow} onPress={() => setAccepted((current) => !current)}>
-            <View style={[styles.checkbox, accepted && styles.checkboxOn]}>
-              {accepted ? <Ionicons name="checkmark" size={16} color={colors.white} /> : null}
-            </View>
-            <Text style={styles.terms}>
-              I agree to the{' '}
-              <Text style={styles.link} onPress={() => Alert.alert('Terms & Conditions', 'Placeholder content.')}>
-                Terms & Conditions
-              </Text>{' '}
-              and{' '}
-              <Text style={styles.link} onPress={() => Alert.alert('Privacy Policy', 'Placeholder content.')}>
-                Privacy Policy
-              </Text>
+          <TouchableOpacity style={styles.checkRow} onPress={() => setAgreed((a) => !a)}>
+            <Ionicons
+              name={agreed ? 'checkbox' : 'square-outline'}
+              size={20}
+              color={agreed ? colors.primary : colors.textMuted}
+            />
+            <Text style={styles.checkText}>
+              I agree to the <Text style={styles.link}>Terms & Conditions</Text> and{' '}
+              <Text style={styles.link}>Privacy Policy</Text>
             </Text>
           </TouchableOpacity>
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          <PrimaryButton title="Sign Up" onPress={handleSubmit} disabled={!isValid || loading} loading={loading} />
+          <View style={{ marginTop: spacing.md }}>
+            {loading ? (
+              <ActivityIndicator color={colors.primary} />
+            ) : (
+              <PrimaryButton title="Sign Up" onPress={handleSignUp} disabled={!canSubmit} />
+            )}
+          </View>
 
-          <Text style={styles.footer}>
-            Already have an account?{' '}
-            <Text style={styles.link} onPress={() => navigation.navigate('Login')}>
-              Log In
+          <TouchableOpacity onPress={() => navigation.navigate('Login')} style={{ marginTop: spacing.lg }}>
+            <Text style={typography.muted}>
+              Already have an account? <Text style={styles.link}>Log In</Text>
             </Text>
-          </Text>
-        </ScrollView>
+          </TouchableOpacity>
+        </Animated.View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-function Field({ icon, rightIcon, onRightPress, ...props }) {
-  return (
-    <View style={styles.inputWrap}>
-      <Ionicons name={icon} size={20} color={colors.textMuted} />
-      <TextInput style={styles.input} placeholderTextColor={colors.textMuted} {...props} />
-      {rightIcon ? (
-        <TouchableOpacity onPress={onRightPress}>
-          <Ionicons name={rightIcon} size={20} color={colors.textMuted} />
-        </TouchableOpacity>
-      ) : null}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  flex: { flex: 1 },
-  container: { padding: spacing.lg, paddingTop: spacing.xl, gap: spacing.md },
-  title: { ...typography.title, fontSize: 28 },
-  subtitle: { ...typography.muted, fontSize: 15, marginBottom: spacing.sm },
-  inputWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
+  container: { flex: 1, justifyContent: 'center', padding: spacing.lg },
+  icon: { alignSelf: 'center', marginBottom: spacing.sm },
+  label: { ...typography.muted, marginTop: spacing.md, marginBottom: spacing.xs },
+  input: {
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.md,
+    borderRadius: 10,
+    padding: spacing.md,
     backgroundColor: colors.card,
   },
-  input: { flex: 1, paddingVertical: 14, color: colors.text },
-  checkboxRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.card,
-  },
-  checkboxOn: { borderColor: colors.primary, backgroundColor: colors.primary },
-  terms: { ...typography.muted, flex: 1, lineHeight: 20 },
-  link: { color: colors.primary, fontWeight: '700' },
-  error: { color: colors.danger, fontSize: 13 },
-  footer: { ...typography.muted, textAlign: 'center', marginTop: spacing.sm },
+  passwordRow: { flexDirection: 'row', alignItems: 'center' },
+  eyeButton: { padding: spacing.sm },
+  checkRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.md, gap: spacing.sm },
+  checkText: { flex: 1, color: colors.textMuted, fontSize: 13 },
+  link: { color: colors.primary, fontWeight: '600' },
+  error: { color: colors.danger, marginTop: spacing.sm },
 });

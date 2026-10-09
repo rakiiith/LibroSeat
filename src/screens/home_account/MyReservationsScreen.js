@@ -1,7 +1,3 @@
-// Screen: My Reservations / Profile
-// Owned by: Nimnada (Home & Account Module)
-// Fully implemented — Active/Past tab switch over a live reservation list.
-
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,11 +21,22 @@ const STATUS_TONE = {
 export default function MyReservationsScreen({ navigation }) {
   const userId = useCurrentUserId();
   const [reservations, setReservations] = useState([]);
-  const [tab, setTab] = useState('active'); // 'active' | 'past'
+  const [tab, setTab] = useState('active');
 
   useEffect(() => {
-    const unsubscribe = subscribeToReservations(userId, setReservations);
-    return unsubscribe;
+    // Wait for a real user id — never subscribe with null/undefined.
+    if (!userId) return;
+
+    // `active` stops late callbacks from updating state after unmount.
+    let active = true;
+    const unsubscribe = subscribeToReservations(userId, (items) => {
+      if (active) setReservations(items);
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [userId]);
 
   const filtered = reservations.filter((r) =>
@@ -37,15 +44,7 @@ export default function MyReservationsScreen({ navigation }) {
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.profileHeader}>
-        <Ionicons name="person-circle-outline" size={48} color={colors.primary} />
-        <View style={{ marginLeft: spacing.sm }}>
-          <Text style={typography.subtitle}>Student</Text>
-          <Text style={typography.muted}>ID: {userId}</Text>
-        </View>
-      </View>
-
+    <SafeAreaView style={styles.safe} edges={['bottom']}>
       <View style={styles.tabRow}>
         <TabButton label="Active" active={tab === 'active'} onPress={() => setTab('active')} />
         <TabButton label="Past" active={tab === 'past'} onPress={() => setTab('past')} />
@@ -86,10 +85,7 @@ export default function MyReservationsScreen({ navigation }) {
 
 function TabButton({ label, active, onPress }) {
   return (
-    <TouchableOpacity
-      style={[styles.tabButton, active && styles.tabButtonActive]}
-      onPress={onPress}
-    >
+    <TouchableOpacity style={[styles.tabButton, active && styles.tabButtonActive]} onPress={onPress}>
       <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{label}</Text>
     </TouchableOpacity>
   );
@@ -98,12 +94,6 @@ function TabButton({ label, active, onPress }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   container: { padding: spacing.lg, flexGrow: 1 },
-  profileHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-  },
   tabRow: {
     flexDirection: 'row',
     marginTop: spacing.md,
