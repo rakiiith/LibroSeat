@@ -1,112 +1,64 @@
-// Screen: Welcome / Onboarding (3 auto-advancing slides)
-// Shows only on a cold app start (this screen is the navigator's
-// initialRouteName, and every other screen is reached via .replace(),
-// so it's never pushed back onto the stack — pressing back from
-// RoleSelection/Login exits the app instead of returning here).
-//
-// Auto-advances through 3 dots on its own and then redirects based on
-// whether a Supabase session already exists — no tap required.
-
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, Animated, ActivityIndicator, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, typography } from '../../theme/theme';
-import { supabase } from '../../supabase/supabaseClient';
+import * as client from '../../supabase/supabaseClient';
 import { getSupabaseProfile } from '../../supabase/authService';
 
-const SLIDE_DURATION_MS = 900; // time each dot is "active" before advancing
-const SLIDES = [
-  { title: 'LibroSeat', subtitle: 'Reserve. Read. Relax.' },
-  { title: 'Find Your Book', subtitle: 'Check availability in real time.' },
-  { title: 'Book Your Seat', subtitle: 'Reserve a reading-room spot in seconds.' },
-];
+const supabase = client.supabase ?? client.default;
+const MIN_SPLASH_MS = 1200;
+
+async function resolveTarget() {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const user = data?.session?.user;
+    if (!user) return 'RoleSelection';
+    const profile = await getSupabaseProfile(user.id);
+    if (profile?.role === 'staff') return 'AdminDashboard';
+    if (profile) return 'Home';
+    return 'RoleSelection';
+  } catch (e) {
+    return 'RoleSelection';
+  }
+}
 
 export default function WelcomeScreen({ navigation }) {
-  const [activeDot, setActiveDot] = useState(0);
-  const fade = useRef(new Animated.Value(1)).current;
+  const fade = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.85)).current;
 
   useEffect(() => {
-    let dotIndex = 0;
-    const dotTimer = setInterval(() => {
-      dotIndex = (dotIndex + 1) % SLIDES.length;
-      Animated.sequence([
-        Animated.timing(fade, { toValue: 0, duration: 150, useNativeDriver: true }),
-        Animated.timing(fade, { toValue: 1, duration: 150, useNativeDriver: true }),
-      ]).start();
-      setActiveDot(dotIndex);
-    }, SLIDE_DURATION_MS);
+    Animated.parallel([
+      Animated.timing(fade, { toValue: 1, duration: 500, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, friction: 6, useNativeDriver: true }),
+    ]).start();
 
-    const totalTimer = setTimeout(async () => {
-      clearInterval(dotTimer);
-      try {
-        const { data } = await supabase.auth.getSession();
-        const user = data?.session?.user;
-        if (user) {
-          const profile = await getSupabaseProfile(user);
-          if (profile?.role === 'staff') {
-            navigation.replace('AdminDashboard');
-            return;
-          }
-          if (profile) {
-            navigation.replace('Home');
-            return;
-          }
-        }
-      } catch (e) {
-        console.warn('Welcome session check failed:', e.message);
-      }
-      navigation.replace('RoleSelection');
-    }, SLIDES.length * SLIDE_DURATION_MS);
-
+    let active = true;
+    const wait = new Promise((r) => setTimeout(r, MIN_SPLASH_MS));
+    Promise.all([wait, resolveTarget()]).then(([, target]) => {
+      if (active) navigation.reset({ index: 0, routes: [{ name: target }] });
+    });
     return () => {
-      clearInterval(dotTimer);
-      clearTimeout(totalTimer);
+      active = false;
     };
-  }, []);
-
-  const slide = SLIDES[activeDot];
+  }, [navigation, fade, scale]);
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Animated.View style={[styles.container, { opacity: fade }]}>
-        <View style={styles.iconCircle}>
-          <Ionicons name="library-outline" size={40} color={colors.white} />
+    <View style={s.container}>
+      <Animated.View style={{ alignItems: 'center', opacity: fade, transform: [{ scale }] }}>
+        <View style={s.logo}>
+          <Ionicons name="library-outline" size={54} color="#fff" />
         </View>
-        <Text style={styles.title}>{slide.title}</Text>
-        <Text style={styles.subtitle}>{slide.subtitle}</Text>
+        <Text style={s.name}>LibroSeat</Text>
+        <Text style={s.tag}>Reserve books. Book seats.</Text>
       </Animated.View>
-
-      <View style={styles.dotsRow}>
-        {SLIDES.map((_, i) => (
-          <View key={i} style={[styles.dot, i === activeDot && styles.dotActive]} />
-        ))}
-      </View>
-    </SafeAreaView>
+      <ActivityIndicator color="#fff" style={s.spinner} />
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.primary, justifyContent: 'center' },
-  container: { alignItems: 'center', paddingHorizontal: spacing.xl },
-  iconCircle: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.lg,
-  },
-  title: { ...typography.title, color: colors.white, fontSize: 26, textAlign: 'center' },
-  subtitle: { color: 'rgba(255,255,255,0.85)', marginTop: spacing.xs, textAlign: 'center' },
-  dotsRow: {
-    position: 'absolute',
-    bottom: spacing.xl,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    gap: 6,
-  },
-  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.4)' },
-  dotActive: { backgroundColor: colors.white, width: 18 },
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#14919B', alignItems: 'center', justifyContent: 'center' },
+  logo: { width: 104, height: 104, borderRadius: 52, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
+  name: { fontSize: 34, fontWeight: '800', color: '#fff', letterSpacing: 0.5 },
+  tag: { fontSize: 15, color: 'rgba(255,255,255,0.85)', marginTop: 6 },
+  spinner: { position: 'absolute', bottom: 70 },
 });
