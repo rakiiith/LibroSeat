@@ -17,12 +17,14 @@ export default function SeatCard({
   seat,
   selected = false,
   disabled = false,
+  bookedToday = false,
   onPress,
 }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ selected, disabled }}
+      accessibilityLabel={`Seat ${seat.seat_number ?? ''}${bookedToday ? ', has a confirmed booking today; another time may be available' : ', available today'}`}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
@@ -58,12 +60,13 @@ export default function SeatCard({
 
       <View style={styles.bottom}>
         <Text numberOfLines={1} style={styles.type}>
-          {disabled ? 'Booked today' : seat.seat_type || 'Available'}
+          {disabled ? 'Unavailable' : bookedToday ? 'Booked today · check time' : seat.seat_type || 'Available'}
         </Text>
         <View
           style={[
             styles.dot,
             disabled && { backgroundColor: C.red },
+            bookedToday && !disabled && { backgroundColor: '#D99531' },
             selected && { backgroundColor: C.teal },
           ]}
         />

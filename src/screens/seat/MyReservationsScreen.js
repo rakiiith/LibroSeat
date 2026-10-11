@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,13 +12,20 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../supabase/supabaseClient';
+import { useFocusEffect } from '@react-navigation/native';
+import {
+  cancelSeatReservation,
+  fetchMySeatReservations,
+  getCurrentUser,
+  localDateString,
+  subscribeToSeatReservations,
+} from './seatReservationService';
 
 const C = {
-  bg: '#071215', panel: '#0B191D', panelLight: '#102329', teal: '#17343C',
-  amber: '#FF9D00', orange: '#FF6B00', cyan: '#00F0FF', emerald: '#10B981',
-  white: '#F4F7F8', muted: '#91A4A9', faint: '#53686D', border: 'rgba(255,255,255,0.09)',
-  rose: '#FB7185',
+  bg: '#F4F7F8', white: '#FFFFFF', teal: '#0F8B8D', dark: '#08696C',
+  text: '#18323B', muted: '#71838A', faint: '#91A0A8', border: '#DFE8EA',
+  pale: '#E3F5F1', emerald: '#23865B', greenBg: '#E5F6EC',
+  amber: '#A96B00', amberBg: '#FFF4DD', rose: '#B94048', roseBg: '#FDEBEC',
 };
 
 const dateKey = (date = new Date()) => {
@@ -40,22 +47,38 @@ function displayTime(value) {
   return value ? String(value).slice(0, 5) : '—';
 }
 
-function isActive(item) {
+function currentTimeString() {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+}
+
+function isUpcoming(item) {
   const status = String(item.status || '').toLowerCase();
-  return status === 'confirmed' && item.booking_date >= dateKey();
+  if (status !== 'confirmed' && status !== 'pending') return false;
+  const today = dateKey();
+  if (item.booking_date > today) return true;
+  return item.booking_date === today && displayTime(item.end_time) >= currentTimeString();
+}
+
+function canCancel(item) {
+  return String(item.status || '').toLowerCase() === 'confirmed' && (
+    item.booking_date > dateKey() ||
+    (item.booking_date === dateKey() && displayTime(item.start_time) > currentTimeString())
+  );
 }
 
 function statusTone(status) {
   switch (String(status || '').toLowerCase()) {
-    case 'confirmed': return { text: C.emerald, bg: 'rgba(16,185,129,0.12)', icon: 'checkmark-circle' };
-    case 'cancelled': return { text: C.rose, bg: 'rgba(251,113,133,0.12)', icon: 'close-circle' };
-    default: return { text: C.amber, bg: 'rgba(255,157,0,0.12)', icon: 'time' };
+    case 'confirmed': return { text: C.emerald, bg: C.greenBg, icon: 'checkmark-circle' };
+    case 'cancelled': return { text: C.rose, bg: C.roseBg, icon: 'close-circle' };
+    default: return { text: C.amber, bg: C.amberBg, icon: 'time' };
   }
 }
 
 export default function MyReservationsScreen({ navigation }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
   const [tab, setTab] = useState('Upcoming');
@@ -63,41 +86,68 @@ export default function MyReservationsScreen({ navigation }) {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (userId, refresh = false) => {
+    if (refresh) setRefreshing(true);
+    else setLoading(true);
     setError('');
     try {
-      const { data: authData, error: authError } = await supabase.auth.getUser();
-      if (authError) throw authError;
-      if (!authData?.user) throw new Error('Please sign in to view your reservations.');
-
-      const { data, error: queryError } = await supabase
-        .from('seat_reservations')
-        .select(`id, seat_id, booking_date, start_time, end_time, status,
-          library_seats (seat_number, seat_type, reading_rooms (name, floor))`)
-        .eq('user_id', authData.user.id)
-        .order('booking_date', { ascending: false });
-      if (queryError) throw queryError;
-      setItems(data ?? []);
+      const reservations = await fetchMySeatReservations(userId);
+      setItems(reservations);
     } catch (e) {
       setError(e.message || 'Unable to load reservations.');
     } finally {
-      setLoading(false);
+      if (refresh) setRefreshing(false);
+      else setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    let unsubscribe;
+    const start = async () => {
+      try {
+        const user = await getCurrentUser();
+        if (!active) return;
+        unsubscribe = subscribeToSeatReservations(() => load(user.id, true), user.id);
+        await load(user.id);
+      } catch (e) {
+        if (active) {
+          setError(e.message || 'Unable to load reservations.');
+          setLoading(false);
+        }
+      }
+    };
+    start();
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [load]));
 
-  const upcomingCount = items.filter(isActive).length;
+  const refreshReservations = useCallback(async () => {
+    try {
+      const user = await getCurrentUser();
+      await load(user.id, true);
+    } catch (e) {
+      setError(e.message || 'Unable to refresh reservations.');
+      setRefreshing(false);
+    }
+  }, [load]);
+
+  const upcomingCount = items.filter(isUpcoming).length;
   const visibleItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     return items.filter(item => {
-      const active = isActive(item);
+      const active = isUpcoming(item);
       const matchesTab = tab === 'Upcoming' ? active : !active;
       const seat = item.library_seats?.seat_number ?? item.seat_id ?? '';
       const room = item.library_seats?.reading_rooms?.name ?? '';
       const haystack = `${seat} ${room} ${item.booking_date} ${item.status}`.toLowerCase();
       return matchesTab && (!query || haystack.includes(query));
+    }).sort((left, right) => {
+      const a = `${left.booking_date} ${displayTime(left.start_time)}`;
+      const b = `${right.booking_date} ${displayTime(right.start_time)}`;
+      return tab === 'Upcoming' ? a.localeCompare(b) : b.localeCompare(a);
     });
   }, [items, search, tab]);
 
@@ -112,17 +162,10 @@ export default function MyReservationsScreen({ navigation }) {
           onPress: async () => {
             setBusyId(item.id);
             try {
-              const { data: authData, error: authError } = await supabase.auth.getUser();
-              if (authError) throw authError;
-              if (!authData?.user) throw new Error('Please sign in again.');
-              const { error: updateError } = await supabase
-                .from('seat_reservations')
-                .update({ status: 'cancelled' })
-                .eq('id', item.id)
-                .eq('user_id', authData.user.id);
-              if (updateError) throw updateError;
+              const user = await getCurrentUser();
+              await cancelSeatReservation(item.id, user.id);
               setSelected(null);
-              await load();
+              await load(user.id, true);
               Alert.alert('Reservation cancelled', 'Your seat is now available to other members.');
             } catch (e) {
               Alert.alert('Could not cancel', e.message || 'Please try again.');
@@ -139,7 +182,7 @@ export default function MyReservationsScreen({ navigation }) {
     const seat = item.library_seats?.seat_number ?? item.seat_id;
     const room = item.library_seats?.reading_rooms?.name ?? 'Reading room';
     const status = statusTone(item.status);
-    const active = isActive(item);
+    const active = isUpcoming(item);
     return (
       <Pressable onPress={() => setSelected(item)} style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
         <View style={styles.cardTop}>
@@ -178,7 +221,7 @@ export default function MyReservationsScreen({ navigation }) {
             <Ionicons name="ticket-outline" size={16} color={C.amber} />
             <Text style={styles.passButtonText}>Reservation details</Text>
           </Pressable>
-          {active && (
+          {canCancel(item) && (
             <Pressable disabled={busyId === item.id} onPress={() => cancel(item)} style={styles.cancelButton}>
               {busyId === item.id ? <ActivityIndicator size="small" color={C.rose} /> : <>
                 <Ionicons name="close" size={15} color={C.rose} />
@@ -193,7 +236,7 @@ export default function MyReservationsScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
       <View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => navigation?.canGoBack?.() ? navigation.goBack() : navigation?.navigate?.('Home')} style={styles.headerButton}>
           <Ionicons name="arrow-back" size={18} color={C.white} />
@@ -219,7 +262,7 @@ export default function MyReservationsScreen({ navigation }) {
           const active = tab === value;
           return (
             <Pressable key={value} onPress={() => setTab(value)} style={[styles.tab, active && styles.tabActive]}>
-              <Ionicons name={value === 'Upcoming' ? 'flash' : 'time'} size={14} color={active ? '#111' : C.muted} />
+              <Ionicons name={value === 'Upcoming' ? 'flash' : 'time'} size={14} color={active ? C.white : C.muted} />
               <Text style={[styles.tabText, active && styles.tabTextActive]}>{value}</Text>
               {value === 'Upcoming' && <Text style={[styles.countBadge, active && styles.countBadgeActive]}>{upcomingCount}</Text>}
             </Pressable>
@@ -230,14 +273,14 @@ export default function MyReservationsScreen({ navigation }) {
       {loading ? (
         <View style={styles.center}><ActivityIndicator size="large" color={C.amber} /><Text style={styles.helper}>Loading your passes...</Text></View>
       ) : error ? (
-        <View style={styles.center}><Ionicons name="cloud-offline-outline" size={34} color={C.rose} /><Text style={styles.error}>{error}</Text><Pressable onPress={load} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>
+        <View style={styles.center}><Ionicons name="cloud-offline-outline" size={34} color={C.rose} /><Text style={styles.error}>{error}</Text><Pressable onPress={refreshReservations} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>
       ) : (
         <FlatList
           data={visibleItems}
           keyExtractor={item => String(item.id)}
           renderItem={renderItem}
-          onRefresh={load}
-          refreshing={loading}
+          onRefresh={refreshReservations}
+          refreshing={refreshing}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={<View style={styles.empty}><View style={styles.emptyIcon}><Ionicons name={tab === 'Upcoming' ? 'ticket-outline' : 'time-outline'} size={25} color={C.amber} /></View><Text style={styles.emptyTitle}>{search ? 'No matching reservations' : tab === 'Upcoming' ? 'No upcoming passes' : 'No reservation history'}</Text><Text style={styles.helper}>{search ? 'Try a different seat, room, or date.' : 'Your seat bookings will show up here.'}</Text></View>}
@@ -263,7 +306,7 @@ export default function MyReservationsScreen({ navigation }) {
             <View style={styles.detailCell}><Text style={styles.detailLabel}>TIME SLOT</Text><Text style={styles.detailValue}>{displayTime(selected.start_time)} – {displayTime(selected.end_time)}</Text></View>
           </View>
           <View style={styles.modalStatusRow}><Text style={styles.detailLabel}>BOOKING STATUS</Text><View style={[styles.statusPill, { backgroundColor: statusTone(selected.status).bg }]}><Text style={[styles.statusText, { color: statusTone(selected.status).text }]}>{selected.status || 'Pending'}</Text></View></View>
-          {isActive(selected) && <Pressable onPress={() => cancel(selected)} style={styles.modalCancel}><Text style={styles.modalCancelText}>Cancel reservation</Text></Pressable>}
+          {canCancel(selected) && <Pressable onPress={() => cancel(selected)} style={styles.modalCancel}><Text style={styles.modalCancelText}>Cancel reservation</Text></Pressable>}
           <Pressable onPress={() => setSelected(null)} style={styles.doneButton}><Text style={styles.doneText}>Done</Text></Pressable>
         </View>
       </View>}
@@ -274,70 +317,70 @@ export default function MyReservationsScreen({ navigation }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
   header: { minHeight: 72, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 10 },
-  headerButton: { width: 42, height: 42, borderRadius: 15, borderWidth: 1, borderColor: C.border, backgroundColor: 'rgba(255,255,255,0.035)', alignItems: 'center', justifyContent: 'center' },
+  headerButton: { width: 42, height: 42, borderRadius: 15, borderWidth: 1, borderColor: C.border, backgroundColor: C.white, alignItems: 'center', justifyContent: 'center' },
   headerTitleWrap: { alignItems: 'center' },
-  title: { color: C.white, fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
+  title: { color: C.text, fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   activeCount: { flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6 },
-  activeCountText: { color: C.amber, fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
+  activeCountText: { color: C.dark, fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.emerald },
-  searchWrap: { minHeight: 44, marginHorizontal: 22, marginBottom: 10, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: C.panel, borderWidth: 1, borderColor: 'rgba(255,157,0,0.28)', borderRadius: 15 },
-  searchInput: { flex: 1, color: C.white, fontSize: 12, paddingVertical: 9 },
-  tabs: { flexDirection: 'row', marginHorizontal: 22, marginTop: 8, marginBottom: 8, padding: 4, borderRadius: 16, backgroundColor: '#061013', borderWidth: 1, borderColor: C.border },
+  searchWrap: { minHeight: 48, marginHorizontal: 20, marginBottom: 10, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: C.white, borderWidth: 1, borderColor: C.border, borderRadius: 14 },
+  searchInput: { flex: 1, color: C.text, fontSize: 13, paddingVertical: 10 },
+  tabs: { flexDirection: 'row', marginHorizontal: 20, marginTop: 8, marginBottom: 8, padding: 4, borderRadius: 14, backgroundColor: '#E9EFF0', borderWidth: 1, borderColor: C.border },
   tab: { flex: 1, minHeight: 40, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
-  tabActive: { backgroundColor: C.amber, shadowColor: C.amber, shadowOpacity: 0.25, shadowRadius: 10, elevation: 3 },
+  tabActive: { backgroundColor: C.teal },
   tabText: { color: C.muted, fontSize: 12, fontWeight: '700' },
-  tabTextActive: { color: '#111820' },
-  countBadge: { overflow: 'hidden', color: C.amber, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9, fontWeight: '800' },
-  countBadgeActive: { color: '#FFE7BD', borderWidth: 1, borderColor: 'rgba(0,0,0,0.14)' },
-  list: { paddingHorizontal: 21, paddingTop: 10, paddingBottom: 32, flexGrow: 1 },
-  card: { backgroundColor: 'rgba(255,255,255,0.045)', borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 15, marginBottom: 14 },
-  cardPressed: { borderColor: 'rgba(255,157,0,0.45)', backgroundColor: 'rgba(255,255,255,0.07)' },
+  tabTextActive: { color: C.white },
+  countBadge: { overflow: 'hidden', color: C.dark, backgroundColor: '#D7ECE8', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9, fontWeight: '800' },
+  countBadgeActive: { color: C.teal, backgroundColor: C.white },
+  list: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 32, flexGrow: 1 },
+  card: { backgroundColor: C.white, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 15, marginBottom: 13 },
+  cardPressed: { borderColor: C.teal, backgroundColor: '#F8FCFC' },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  seatBadge: { width: 49, height: 49, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,157,0,0.4)', backgroundColor: 'rgba(255,157,0,0.12)', alignItems: 'center', justifyContent: 'center' },
+  seatBadge: { width: 49, height: 49, borderRadius: 15, borderWidth: 1, borderColor: '#BDE4DD', backgroundColor: C.pale, alignItems: 'center', justifyContent: 'center' },
   seatEyebrow: { color: C.muted, fontSize: 8, fontWeight: '700', letterSpacing: 1 },
-  seatNumber: { color: C.white, fontSize: 16, fontWeight: '900', marginTop: 1 },
+  seatNumber: { color: C.teal, fontSize: 16, fontWeight: '900', marginTop: 1 },
   cardHeading: { flex: 1 },
-  roomName: { color: C.white, fontSize: 13, fontWeight: '800' },
+  roomName: { color: C.text, fontSize: 13, fontWeight: '800' },
   metaLine: { color: C.muted, fontSize: 10, marginTop: 5 },
   statusPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 12 },
   statusText: { fontSize: 9, fontWeight: '800', textTransform: 'capitalize' },
-  dateStrip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, paddingHorizontal: 11, paddingVertical: 10, backgroundColor: 'rgba(0,0,0,0.27)', borderRadius: 13, borderWidth: 1, borderColor: 'rgba(255,255,255,0.04)' },
+  dateStrip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, paddingHorizontal: 11, paddingVertical: 10, backgroundColor: C.bg, borderRadius: 12, borderWidth: 1, borderColor: C.border },
   dateTextWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 },
-  dateText: { color: '#D5E0E2', fontSize: 10, fontWeight: '600', flexShrink: 1 },
+  dateText: { color: C.text, fontSize: 10, fontWeight: '600', flexShrink: 1 },
   activeLabel: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   activeLabelText: { color: C.emerald, fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
-  expiredText: { color: C.faint, fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
-  actions: { flexDirection: 'row', gap: 8, marginTop: 12, paddingTop: 11, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
-  passButton: { flex: 1, minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', backgroundColor: 'rgba(255,255,255,0.04)' },
-  passButtonText: { color: '#DDE6E7', fontSize: 10, fontWeight: '700' },
-  cancelButton: { minWidth: 86, minHeight: 38, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(251,113,133,0.3)' },
+  expiredText: { color: C.muted, fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
+  actions: { flexDirection: 'row', gap: 8, marginTop: 12, paddingTop: 11, borderTopWidth: 1, borderTopColor: C.border },
+  passButton: { flex: 1, minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 12, borderWidth: 1, borderColor: '#CFE5E3', backgroundColor: '#F7FBFA' },
+  passButtonText: { color: C.dark, fontSize: 10, fontWeight: '700' },
+  cancelButton: { minWidth: 86, minHeight: 38, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 12, borderWidth: 1, borderColor: '#F0C7C9', backgroundColor: '#FFF9F9' },
   cancelText: { color: C.rose, fontSize: 10, fontWeight: '700' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28 },
   helper: { color: C.muted, textAlign: 'center', fontSize: 12, marginTop: 9, lineHeight: 18 },
-  error: { color: '#FFC2CA', textAlign: 'center', fontSize: 13, marginTop: 12 },
-  retry: { marginTop: 16, backgroundColor: C.amber, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 10 },
-  retryText: { color: '#111820', fontSize: 12, fontWeight: '800' },
+  error: { color: '#A52B32', textAlign: 'center', fontSize: 13, marginTop: 12 },
+  retry: { marginTop: 16, backgroundColor: C.teal, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 10 },
+  retryText: { color: C.white, fontSize: 12, fontWeight: '800' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28, paddingBottom: 70 },
-  emptyIcon: { width: 58, height: 58, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,157,0,0.1)', borderWidth: 1, borderColor: 'rgba(255,157,0,0.2)' },
-  emptyTitle: { color: C.white, fontSize: 16, fontWeight: '800', marginTop: 16 },
-  modalOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 10, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.76)' },
-  detailSheet: { paddingHorizontal: 22, paddingTop: 11, paddingBottom: 28, borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: '#0B191D', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
-  sheetHandle: { alignSelf: 'center', width: 38, height: 4, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.2)', marginBottom: 18 },
+  emptyIcon: { width: 58, height: 58, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: C.pale, borderWidth: 1, borderColor: '#BDE4DD' },
+  emptyTitle: { color: C.text, fontSize: 16, fontWeight: '800', marginTop: 16 },
+  modalOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 10, justifyContent: 'flex-end', backgroundColor: 'rgba(24,50,59,0.35)' },
+  detailSheet: { paddingHorizontal: 22, paddingTop: 11, paddingBottom: 28, borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: C.white, borderWidth: 1, borderColor: C.border },
+  sheetHandle: { alignSelf: 'center', width: 38, height: 4, borderRadius: 3, backgroundColor: '#CBD6D8', marginBottom: 18 },
   sheetHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 15, borderBottomWidth: 1, borderBottomColor: C.border },
-  sheetIcon: { width: 35, height: 35, borderRadius: 12, backgroundColor: 'rgba(255,157,0,0.13)', alignItems: 'center', justifyContent: 'center' },
+  sheetIcon: { width: 35, height: 35, borderRadius: 12, backgroundColor: C.pale, alignItems: 'center', justifyContent: 'center' },
   sheetEyebrow: { color: C.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1 },
-  sheetId: { color: C.amber, fontSize: 11, fontWeight: '700', marginTop: 3 },
-  closeButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
-  detailHero: { alignItems: 'center', paddingVertical: 20, marginTop: 15, borderRadius: 18, backgroundColor: 'rgba(255,157,0,0.07)', borderWidth: 1, borderColor: 'rgba(255,157,0,0.17)' },
+  sheetId: { color: C.teal, fontSize: 11, fontWeight: '700', marginTop: 3 },
+  closeButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' },
+  detailHero: { alignItems: 'center', paddingVertical: 20, marginTop: 15, borderRadius: 16, backgroundColor: C.pale, borderWidth: 1, borderColor: '#CFE5E3' },
   detailLabel: { color: C.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1 },
-  detailSeat: { color: C.amber, fontSize: 24, fontWeight: '900', marginTop: 6 },
-  detailRoom: { color: '#D1DDDF', fontSize: 12, marginTop: 4 },
+  detailSeat: { color: C.teal, fontSize: 24, fontWeight: '900', marginTop: 6 },
+  detailRoom: { color: C.text, fontSize: 12, marginTop: 4 },
   detailGrid: { flexDirection: 'row', gap: 9, marginTop: 10 },
-  detailCell: { flex: 1, padding: 12, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.045)', borderWidth: 1, borderColor: C.border },
-  detailValue: { color: C.white, fontSize: 11, fontWeight: '700', marginTop: 8 },
+  detailCell: { flex: 1, padding: 12, borderRadius: 14, backgroundColor: C.bg, borderWidth: 1, borderColor: C.border },
+  detailValue: { color: C.text, fontSize: 11, fontWeight: '700', marginTop: 8 },
   modalStatusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16 },
-  modalCancel: { alignItems: 'center', paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: 'rgba(251,113,133,0.35)', marginBottom: 9 },
+  modalCancel: { alignItems: 'center', paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: '#F0C7C9', backgroundColor: '#FFF9F9', marginBottom: 9 },
   modalCancelText: { color: C.rose, fontSize: 12, fontWeight: '800' },
-  doneButton: { alignItems: 'center', paddingVertical: 13, borderRadius: 13, backgroundColor: C.amber },
-  doneText: { color: '#111820', fontSize: 12, fontWeight: '900' },
+  doneButton: { alignItems: 'center', paddingVertical: 13, borderRadius: 13, backgroundColor: C.teal },
+  doneText: { color: C.white, fontSize: 12, fontWeight: '900' },
 });

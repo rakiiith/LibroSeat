@@ -1,14 +1,23 @@
-// Screen: Manage Reservations | Owned by: Bandara (Staff/Admin Module)
-// TODO: list all reservations (READ), allow releasing an unused seat (UPDATE/DELETE).
-import React from 'react';
-import StubScreen from '../../components/StubScreen';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { Card, EmptyState, StatusBadge } from '../../components/UIKit';
+import { colors, spacing, typography } from '../../theme/theme';
+import { listReservations, updateReservationStatus } from './adminService';
 
+const tones = { confirmed: 'success', collected: 'neutral', cancelled: 'danger', expired: 'warning' };
 export default function ManageReservationsScreen() {
-  return (
-    <StubScreen
-      title="Manage Reservations"
-      owner="Bandara"
-      todo="reservations table wired to Firestore `reservations` (READ + DELETE)."
-    />
-  );
+  const [reservations, setReservations] = useState([]); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [filter, setFilter] = useState('all');
+  const load = useCallback(async () => { setLoading(true); setError(''); try { setReservations(await listReservations()); } catch (e) { setError(e.message || 'Unable to load reservations.'); } finally { setLoading(false); } }, []);
+  useEffect(() => { load(); }, [load]);
+  const visible = filter === 'all' ? reservations : reservations.filter((r) => r.status === filter);
+  const changeStatus = (item, status) => Alert.alert('Update reservation', `Mark this reservation as ${status}?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Update', onPress: async () => { try { await updateReservationStatus(item, status); await load(); } catch (e) { setError(e.message || 'Could not update reservation.'); } } }]);
+  return <SafeAreaView style={styles.safe} edges={['bottom']}><FlatList data={visible} keyExtractor={(item) => item.id} contentContainerStyle={styles.list} refreshing={loading} onRefresh={load}
+    ListHeaderComponent={<><Text style={typography.title}>Reservations</Text><Text style={[typography.muted, { marginTop: spacing.xs }]}>{reservations.length} total reservations</Text><View style={styles.filters}>{['all', 'confirmed', 'collected', 'cancelled'].map((key) => <TouchableOpacity key={key} onPress={() => setFilter(key)} style={[styles.filter, filter === key && styles.selected]}><Text style={[styles.filterText, filter === key && styles.selectedText]}>{key[0].toUpperCase() + key.slice(1)}</Text></TouchableOpacity>)}</View>{error ? <Text style={styles.error}>{error}</Text> : null}{loading && !reservations.length ? <ActivityIndicator color={colors.primary} /> : null}</>}
+    ListEmptyComponent={!loading ? <EmptyState message="No reservations found for this filter." /> : null}
+    renderItem={({ item }) => <Card style={styles.card}><View style={styles.top}><View style={styles.type}><Ionicons name={item.type === 'seat' ? 'grid-outline' : 'book-outline'} size={20} color={colors.primary} /><Text style={typography.subtitle}>{item.type === 'seat' ? 'Seat booking' : 'Book hold'}</Text></View><StatusBadge label={item.status} tone={tones[item.status] || 'neutral'} /></View><Text style={typography.muted}>Student: {item.user_id}</Text><Text style={typography.muted}>Reference: {item.ref_id || '—'}</Text>{item.booking_date ? <Text style={typography.muted}>Schedule: {item.booking_date} · {item.start_time}–{item.end_time}</Text> : null}<Text style={typography.muted}>Created: {item.created_at ? new Date(item.created_at).toLocaleString() : '—'}</Text>{item.status === 'confirmed' ? <View style={styles.actions}><TouchableOpacity onPress={() => changeStatus(item, item.type === 'seat' ? 'cancelled' : 'collected')}><Text style={styles.action}>{item.type === 'seat' ? 'Release seat' : 'Mark collected'}</Text></TouchableOpacity><TouchableOpacity onPress={() => changeStatus(item, 'cancelled')}><Text style={[styles.action, { color: colors.danger }]}>Cancel</Text></TouchableOpacity></View> : null}</Card>}
+  /></SafeAreaView>;
 }
+
+const styles = StyleSheet.create({ safe: { flex: 1, backgroundColor: colors.background }, list: { padding: spacing.lg, flexGrow: 1 }, filters: { flexDirection: 'row', gap: spacing.xs, marginVertical: spacing.md, flexWrap: 'wrap' }, filter: { paddingHorizontal: 11, paddingVertical: 8, backgroundColor: colors.card, borderRadius: 20, borderWidth: 1, borderColor: colors.border }, selected: { backgroundColor: colors.primary, borderColor: colors.primary }, filterText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' }, selectedText: { color: colors.white }, error: { color: colors.danger, marginBottom: spacing.sm }, card: { gap: spacing.xs }, top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, type: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm }, actions: { flexDirection: 'row', gap: spacing.lg, marginTop: spacing.sm }, action: { color: colors.primary, fontWeight: '700' } });

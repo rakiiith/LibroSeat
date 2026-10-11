@@ -12,7 +12,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { supabase } from '../../supabase/supabaseClient';
+import { useFocusEffect } from '@react-navigation/native';
+import { fetchActiveSeats, fetchReservedSeatIds, localDateString, subscribeToSeatAvailability } from './seatReservationService';
 import SeatCard from './SeatCard';
 
 const C = {
@@ -36,27 +37,16 @@ export default function SelectSeatScreen({ navigation, route }) {
     setError('');
 
     try {
-      const { data, error: queryError } = await supabase
-        .from('library_seats')
-        .select(`
-          id, seat_number, seat_type, is_active,
-          reading_rooms (name, floor)
-        `)
-        .eq('is_active', true)
-        .order('seat_number');
-
-      if (queryError) throw queryError;
-      setSeats(data ?? []);
-      const today = new Date();
-      const bookingDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      const { data: bookings } = await supabase.from('seat_reservations')
-        .select('seat_id').eq('booking_date', bookingDate).eq('status', 'confirmed');
-      const reserved = (bookings ?? []).map((booking) => String(booking.seat_id));
+      const [data, reserved] = await Promise.all([
+        fetchActiveSeats(),
+        fetchReservedSeatIds(localDateString()),
+      ]);
+      setSeats(data);
       setReservedIds(reserved);
       setSelected((current) =>
         current
-          ? (reserved.includes(String(current.id)) ? null : (data ?? []).find((s) => s.id === current.id) ?? null)
-          : (data ?? []).find((s) => String(s.id) === String(route?.params?.selectedSeatId) && !reserved.includes(String(s.id))) ?? null
+          ? data.find((s) => String(s.id) === String(current.id)) ?? null
+          : data.find((s) => String(s.id) === String(route?.params?.selectedSeatId)) ?? null
       );
     } catch (e) {
       setError(e.message || 'Unable to load seats.');
@@ -66,9 +56,11 @@ export default function SelectSeatScreen({ navigation, route }) {
     }
   }, [route?.params?.selectedSeatId]);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     loadSeats();
-  }, [loadSeats]);
+    const unsubscribe = subscribeToSeatAvailability(() => loadSeats(true));
+    return unsubscribe;
+  }, [loadSeats]));
 
   useEffect(() => {
     const room = route?.params?.room;
@@ -131,7 +123,7 @@ export default function SelectSeatScreen({ navigation, route }) {
           <SeatCard
             seat={item}
             selected={selected?.id === item.id}
-            disabled={reservedIds.includes(String(item.id))}
+            bookedToday={reservedIds.includes(String(item.id))}
             onPress={() => setSelected((old) => old?.id === item.id ? null : item)}
           />
         )}
