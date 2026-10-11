@@ -15,13 +15,8 @@ export async function createReservation(type, refId, userId, dueDate = null) {
 
   if (error) throw error;
 
-  const table = type === 'seat' ? 'seats' : 'books';
-  const { error: updateError } = await supabase
-    .from(table)
-    .update({ is_available: false })
-    .eq('id', refId);
-
-  if (updateError) throw updateError;
+  // Note: book availability (is_available) is managed by admin only.
+  // Creating a reservation does NOT change the book's availability flag.
 
   return data;
 }

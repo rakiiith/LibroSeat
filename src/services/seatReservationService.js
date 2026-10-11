@@ -11,34 +11,29 @@ export const TIME_SLOTS = [
 ];
 
 export async function fetchSeatsWithAvailability(dateStr, slot) {
-  // 1. Fetch all seats
   const { data: seats, error: seatErr } = await supabase.from('seats').select('*').order('seat_number');
   if (seatErr) throw seatErr;
 
-  // 2. Fetch reservations for this date and time slot
   const { data: reservations, error: resErr } = await supabase
     .from('seat_reservations')
     .select('seat_id, status')
     .eq('reservation_date', dateStr)
     .eq('start_time', slot.start)
     .in('status', ['reserved', 'checked_in']);
-  
+
   if (resErr) throw resErr;
 
-  // 3. Merge availability map
   const resMap = {};
   reservations.forEach(r => { resMap[r.seat_id] = r.status; });
 
   return seats.map(s => ({
     ...s,
-    // seat is available if it's not blocked AND has no active reservation
     is_available: !s.is_blocked && !resMap[s.id],
     reservation_status: resMap[s.id] || null
   }));
 }
 
 export async function createSeatReservation(seatId, userId, dateStr, slot) {
-  // Check if student already has a reservation at this time
   const { data: existing } = await supabase
     .from('seat_reservations')
     .select('id')
@@ -46,7 +41,7 @@ export async function createSeatReservation(seatId, userId, dateStr, slot) {
     .eq('reservation_date', dateStr)
     .eq('start_time', slot.start)
     .in('status', ['reserved', 'checked_in']);
-    
+
   if (existing && existing.length > 0) {
     throw new Error('You already have an active reservation for this time slot.');
   }
@@ -78,7 +73,7 @@ export async function getStudentSeatReservations(userId) {
     .eq('student_id', userId)
     .order('reservation_date', { ascending: false })
     .order('start_time', { ascending: false });
-    
+
   if (error) throw error;
   return res;
 }
@@ -90,21 +85,19 @@ export async function updateSeatReservationStatus(resId, status) {
     .eq('id', resId)
     .select()
     .single();
-    
+
   if (error) throw error;
   return data;
 }
 
-
 export async function processNoShows(dateStr, slot) {
-  // Check if current time is past start_time + 15 mins
   const now = new Date();
-  const resDate = new Date(`${dateStr}T${slot.start}`);
+  const slotStart = slot.start; // e.g. "08:00:00"
+  const resDate = new Date(dateStr + 'T' + slotStart);
   const cutoff = new Date(resDate);
   cutoff.setMinutes(cutoff.getMinutes() + 15);
 
   if (now > cutoff) {
-    // Find all 'reserved' (not checked_in) for this slot and mark as no_show
     const { error } = await supabase
       .from('seat_reservations')
       .update({ status: 'no_show' })
@@ -126,7 +119,7 @@ export async function fetchAdminSeatData(dateStr, slot) {
     .select('*, profiles(full_name, student_id)')
     .eq('reservation_date', dateStr)
     .eq('start_time', slot.start);
-  
+
   if (resErr) throw resErr;
 
   const resMap = {};
@@ -144,11 +137,9 @@ export async function blockSeat(seatId, isBlocked) {
 }
 
 export async function adminAssignSeat(seatId, studentId, dateStr, slot) {
-  // Check if seat is blocked
   const { data: seat } = await supabase.from('seats').select('is_blocked').eq('id', seatId).single();
-  if (seat?.is_blocked) throw new Error('Cannot assign a blocked seat.');
+  if (seat && seat.is_blocked) throw new Error('Cannot assign a blocked seat.');
 
-  // Create reservation as checked_in (walk-in)
   const { error } = await supabase
     .from('seat_reservations')
     .insert({
@@ -159,10 +150,9 @@ export async function adminAssignSeat(seatId, studentId, dateStr, slot) {
       end_time: slot.end,
       status: 'checked_in'
     });
-  
+
   if (error) {
     if (error.code === '23505') throw new Error('Seat is already taken.');
     throw error;
   }
 }
-
