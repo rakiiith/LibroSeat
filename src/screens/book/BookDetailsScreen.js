@@ -1,38 +1,128 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { Card, PrimaryButton, StatusBadge } from '../../components/UIKit';
-import { colors, radius, spacing, typography } from '../../theme/theme';
-import { getBook } from './bookService';
+import { colors, spacing, typography, radius } from '../../theme/theme';
+import { supabase } from '../../supabase/supabaseClient';
 
-export default function BookDetailsScreen({ route, navigation }) {
-  const [book, setBook] = useState(route.params?.book ?? null);
-  const [loading, setLoading] = useState(false);
+export default function BookDetailsScreen({ navigation, route }) {
+  const passedBook = route?.params?.book;
+  const [book, setBook] = useState(passedBook || null);
+  const [loading, setLoading] = useState(!passedBook);
+
+  // Always re-fetch fresh data from Supabase to avoid stale navigation params
   useEffect(() => {
-    const id = route.params?.book?.id ?? route.params?.bookId;
-    if (!id) return;
-    setLoading(true);
-    getBook(id).then((latest) => latest && setBook(latest)).catch((error) => console.warn('getBook failed:', error.message)).finally(() => setLoading(false));
-  }, [route.params?.book?.id, route.params?.bookId]);
-  const available = book?.status === 'available';
+    if (!passedBook?.id) return;
+    async function fetchFresh() {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('books')
+        .select('*')
+        .eq('id', passedBook.id)
+        .single();
+      if (!error && data) setBook(data);
+      setLoading(false);
+    }
+    fetchFresh();
+  }, [passedBook?.id]);
 
-  return <SafeAreaView style={styles.safe} edges={['bottom']}><ScrollView contentContainerStyle={styles.container}>
-    {loading && !book ? <ActivityIndicator color={colors.primary} /> : null}
-    <View style={styles.hero}><Ionicons name="book" size={68} color={colors.primary} /></View>
-    <Text style={styles.title}>{book?.title || 'Book details'}</Text>
-    <Text style={styles.author}>by {book?.author || 'Unknown author'}</Text>
-    {book ? <StatusBadge label={available ? 'Available to reserve' : (book.status || 'Unavailable')} tone={available ? 'success' : 'warning'} /> : null}
-    <Card style={styles.details}><Text style={typography.subtitle}>About this book</Text><Text style={typography.muted}>Check availability before reserving. Library staff can help with questions about this title.</Text>{book?.created_at ? <Text style={typography.muted}>Added {new Date(book.created_at).toLocaleDateString()}</Text> : null}</Card>
-    <PrimaryButton title="Reserve this book" disabled={!available || !book} onPress={() => navigation.navigate('ReserveBook', { book })} />
-  </ScrollView></SafeAreaView>;
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 60 }} />
+      </SafeAreaView>
+    );
+  }
+
+  if (!book) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <Text style={[styles.title, { padding: spacing.lg }]}>Book Not Found</Text>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <Text style={styles.backBtnText}>Go Back</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
+  const isAvailable = book.is_available === true;
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Text style={styles.title}>{book.title}</Text>
+        <Text style={styles.author}>{book.author || 'Unknown Author'}</Text>
+
+        <View style={styles.detailBox}>
+          <Text style={styles.label}>Category</Text>
+          <Text style={styles.value}>{book.category || 'General'}</Text>
+        </View>
+
+        <View style={styles.detailBox}>
+          <Text style={styles.label}>ISBN</Text>
+          <Text style={styles.value}>{book.isbn || 'N/A'}</Text>
+        </View>
+
+        <View style={styles.detailBox}>
+          <Text style={styles.label}>Location</Text>
+          <Text style={styles.value}>{book.location || 'N/A'}</Text>
+        </View>
+
+        <View style={styles.detailBox}>
+          <Text style={styles.label}>Status</Text>
+          <View style={[styles.statusBadge, { backgroundColor: isAvailable ? '#D1FAE5' : '#FEE2E2' }]}>
+            <View style={[styles.statusDot, { backgroundColor: isAvailable ? '#059669' : '#DC2626' }]} />
+            <Text style={[styles.statusText, { color: isAvailable ? '#059669' : '#DC2626' }]}>
+              {isAvailable ? 'Available' : 'Checked Out / Reserved'}
+            </Text>
+          </View>
+        </View>
+      </ScrollView>
+
+      <View style={styles.footer}>
+        {isAvailable ? (
+          <TouchableOpacity
+            style={styles.reserveBtn}
+            onPress={() => navigation.navigate('ReserveBook', { book })}
+          >
+            <Text style={styles.reserveBtnText}>Reserve Book</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.unavailableBtn}>
+            <Text style={styles.unavailableBtnText}>Not Available for Reservation</Text>
+          </View>
+        )}
+      </View>
+    </SafeAreaView>
+  );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  container: { padding: spacing.lg, gap: spacing.md },
-  hero: { height: 180, borderRadius: radius.lg, backgroundColor: colors.primary + '14', alignItems: 'center', justifyContent: 'center' },
-  title: { ...typography.title, fontSize: 26 },
-  author: { ...typography.muted, fontSize: 16 },
-  details: { gap: spacing.sm, marginTop: spacing.sm },
+  content: { padding: spacing.lg },
+  title: { ...typography.h1, color: colors.text, marginBottom: spacing.xs },
+  author: { ...typography.body, color: colors.textMuted, marginBottom: spacing.xl },
+  detailBox: {
+    backgroundColor: colors.white, padding: spacing.md,
+    borderRadius: radius.sm, marginBottom: spacing.sm,
+    borderWidth: 1, borderColor: colors.border
+  },
+  label: { fontSize: 12, color: colors.textMuted, marginBottom: 4, fontWeight: '600' },
+  value: { fontSize: 14, color: colors.text, fontWeight: '500' },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, alignSelf: 'flex-start' },
+  statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
+  statusText: { fontSize: 13, fontWeight: '700' },
+  footer: { padding: spacing.lg, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.white },
+  reserveBtn: {
+    backgroundColor: colors.primary, paddingVertical: 16,
+    borderRadius: radius.md, alignItems: 'center'
+  },
+  reserveBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  unavailableBtn: {
+    backgroundColor: '#F3F4F6', paddingVertical: 16,
+    borderRadius: radius.md, alignItems: 'center',
+    borderWidth: 1, borderColor: colors.border
+  },
+  unavailableBtnText: { color: colors.textMuted, fontWeight: '600', fontSize: 15 },
+  backBtn: { margin: spacing.lg, padding: spacing.md, alignItems: 'center' },
+  backBtnText: { color: colors.primary, fontWeight: '600' }
 });

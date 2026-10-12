@@ -1,27 +1,27 @@
-// Shared hook: returns the signed-in user's id.
-// Until real login is wired up on the Login screen, this falls back to a
-// fixed DEV_USER_ID so every other screen can be built and tested against
-// real Supabase data right away.
-
 import { useEffect, useState } from 'react';
-import { supabase } from '../supabase/supabaseClient';
+import * as client from '../supabase/supabaseClient';
 
-const DEV_USER_ID = 'dev-test-user'; // TODO: remove once real login is wired up
+const supabase = client.supabase ?? client.default;
 
 export function useCurrentUserId() {
-  const [userId, setUserId] = useState(DEV_USER_ID);
+  const [userId, setUserId] = useState(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setUserId(data?.session?.user?.id ?? DEV_USER_ID);
+    let active = true;
+    const set = (id) => active && setUserId(typeof id === 'string' ? id : null);
+
+    supabase.auth.getSession().then(({ data }) => set(data?.session?.user?.id));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      set(session?.user?.id);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUserId(session?.user?.id ?? DEV_USER_ID);
-    });
-
-    return () => listener.subscription.unsubscribe();
+    return () => {
+      active = false;
+      sub?.subscription?.unsubscribe();
+    };
   }, []);
 
   return userId;
 }
+
+export default useCurrentUserId;

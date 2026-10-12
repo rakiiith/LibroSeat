@@ -1,39 +1,40 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, Modal, StyleSheet, Text, View } from 'react-native';
+import { View, Text, Modal, Animated, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, spacing, typography } from '../theme/theme';
-import { OutlineButton, PrimaryButton } from './UIKit';
+import { colors, spacing, radius, typography } from '../theme/theme';
+import { PrimaryButton, OutlineButton } from './UIKit';
 
 export default function LogoutConfirmModal({ visible, title, message, onCancel, onConfirm }) {
-  const anim = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.9)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.timing(anim, {
-      toValue: visible ? 1 : 0,
-      duration: 180,
-      useNativeDriver: true,
-    }).start();
-  }, [anim, visible]);
-
-  const scale = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.95, 1],
-  });
+    if (visible) {
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+        Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 7 }),
+      ]).start();
+    } else {
+      scale.setValue(0.9);
+      opacity.setValue(0);
+    }
+  }, [visible]);
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onCancel}>
       <View style={styles.backdrop}>
-        <Animated.View style={[styles.card, { opacity: anim, transform: [{ scale }] }]}>
+        <Animated.View style={[styles.card, { opacity, transform: [{ scale }] }]}>
           <View style={styles.iconCircle}>
-            <Ionicons name="exit-outline" size={28} color={colors.primary} />
+            <Ionicons name="log-out-outline" size={26} color={colors.danger} />
           </View>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.message}>{message}</Text>
-          <View style={styles.actions}>
-            <View style={styles.action}>
-              <OutlineButton title="Cancel" onPress={onCancel} />
+          <Text style={[typography.subtitle, { marginTop: spacing.sm, textAlign: 'center' }]}>{title}</Text>
+          <Text style={[typography.muted, { marginTop: spacing.xs, textAlign: 'center' }]}>{message}</Text>
+          <View style={styles.buttonRow}>
+            <View style={{ flex: 1 }}>
+              <OutlineButton title="Cancel" onPress={onCancel} color={colors.textMuted} />
             </View>
-            <View style={styles.action}>
+            <View style={{ flex: 1 }}>
+              {/* Red, not teal — logout is a destructive action */}
               <PrimaryButton title="Log Out" onPress={onConfirm} color={colors.danger} />
             </View>
           </View>
@@ -46,35 +47,25 @@ export default function LogoutConfirmModal({ visible, title, message, onCancel, 
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: spacing.lg,
-    backgroundColor: 'rgba(0,0,0,0.42)',
   },
   card: {
-    width: '100%',
-    maxWidth: 380,
-    alignItems: 'center',
+    backgroundColor: colors.white,
     borderRadius: radius.lg,
     padding: spacing.lg,
-    backgroundColor: colors.card,
+    width: '100%',
+    alignItems: 'center',
   },
   iconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: colors.danger + '1A',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.md,
-    backgroundColor: colors.primary + '14',
   },
-  title: { ...typography.subtitle, fontSize: 18, textAlign: 'center' },
-  message: { ...typography.muted, marginTop: spacing.sm, textAlign: 'center', lineHeight: 20 },
-  actions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.lg,
-    alignSelf: 'stretch',
-  },
-  action: { flex: 1 },
+  buttonRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg, alignSelf: 'stretch' },
 });

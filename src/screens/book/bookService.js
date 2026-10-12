@@ -1,25 +1,42 @@
-import { isSupabaseConfigured, supabase } from '../../supabase/supabaseConfig';
+import { supabase } from '../../supabase/supabaseClient';
 
-export async function searchBooks(query = '') {
-  if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
-  let request = supabase.from('books').select('*').order('title');
-  const term = query.trim();
-  if (term) request = request.or(`title.ilike.%${term}%,author.ilike.%${term}%`);
-  const { data, error } = await request;
-  if (error) throw error;
-  return data ?? [];
+function mapBook(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    author: row.author,
+    category: row.category,
+    isAvailable: row.is_available,
+  };
 }
 
-export async function reserveBook(userId, book) {
-  if (!isSupabaseConfigured || !userId || !book?.id) throw new Error('Please sign in before reserving a book.');
-  const { data, error } = await supabase.rpc('reserve_book', { p_book_id: book.id });
-  if (error) throw error;
-  return data;
+/** READ — fetch categories actually present in the books table. */
+export async function fetchCategories() {
+  const { data, error } = await supabase.from('books').select('category');
+  if (error) {
+    console.warn('fetchCategories error:', error.message);
+    return [];
+  }
+  const unique = [...new Set(data.map((r) => r.category).filter(Boolean))];
+  return unique.sort();
 }
 
-export async function getBook(bookId) {
-  if (!isSupabaseConfigured || !bookId) return null;
-  const { data, error } = await supabase.from('books').select('*').eq('id', bookId).maybeSingle();
-  if (error) throw error;
-  return data;
+/** READ — search by title/author, optionally filtered by category. */
+export async function searchBooks({ query = '', category = 'All' }) {
+  let q = supabase.from('books').select('*').order('title', { ascending: true });
+
+  const text = query.trim().replace(/[,%()]/g, ' ');
+  if (text) {
+    q = q.or(`title.ilike.%${text}%,author.ilike.%${text}%`);
+  }
+  if (category && category !== 'All') {
+    q = q.eq('category', category);
+  }
+
+  const { data, error } = await q;
+  if (error) {
+    console.warn('searchBooks error:', error.message);
+    return [];
+  }
+  return data.map(mapBook);
 }

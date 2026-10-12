@@ -1,146 +1,211 @@
 import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { signOutAccount } from '../../supabase/authService';
-import LogoutConfirmModal from '../../components/LogoutConfirmModal';
-import { Card, OutlineButton, PrimaryButton, StatusBadge } from '../../components/UIKit';
-import { colors, spacing, typography } from '../../theme/theme';
-import { useCurrentUserId } from '../../hooks/useCurrentUserId';
-import { formatDateTime } from '../../hooks/formatDate';
-import { subscribeToReservations } from './accountService';
+import { colors, spacing, radius, typography } from '../../theme/theme';
+import { useCurrentProfile } from '../../hooks/useCurrentProfile';
+import { subscribeToReservations, getRelatedItem } from './accountService';
+import { toJsDate } from '../../hooks/formatDate';
 
-export default function HomeDashboardScreen({ navigation }) {
-  const userId = useCurrentUserId();
-  const [nextReservation, setNextReservation] = useState(null);
-  const [logoutVisible, setLogoutVisible] = useState(false);
+function expiresInText(dueDate) {
+  const d = toJsDate(dueDate);
+  if (!d) return null;
+  const mins = Math.round((d.getTime() - Date.now()) / 60000);
+  if (mins <= 0) return 'Expired';
+  if (mins < 60) return `Expires in ${mins} min`;
+  return `Expires in ${Math.round(mins / 60)} hr`;
+}
 
-  useEffect(() => {
-    if (!userId) {
-      setNextReservation(null);
-      return undefined;
-    }
-    const unsubscribe = subscribeToReservations(userId, (reservations) => {
-      const active = reservations.find((r) => r.status === 'confirmed');
-      setNextReservation(active ?? null);
-    });
-    return unsubscribe;
-  }, [userId]);
-
-  const handleLogout = async () => {
-    setLogoutVisible(false);
-    await signOutAccount();
-    navigation.reset({ index: 0, routes: [{ name: 'Welcome' }] });
-  };
-
+function ActionCard({ icon, title, subtitle, onPress }) {
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.header}>
-          <View>
-            <Text style={typography.title}>Hi, Sanduni</Text>
-            <Text style={typography.muted}>Welcome back</Text>
-          </View>
-          <TouchableOpacity style={styles.iconButton} onPress={() => setLogoutVisible(true)}>
-            <Ionicons name="log-out-outline" size={23} color={colors.text} />
-          </TouchableOpacity>
-        </View>
-
-        <Text style={[typography.subtitle, styles.sectionLabel]}>Your Next Reservation</Text>
-        <Card>
-          {nextReservation ? (
-            <>
-              <View style={styles.cardHeader}>
-                <Text style={typography.body}>
-                  {nextReservation.type === 'seat' ? 'Seat reservation' : 'Book reservation'}
-                </Text>
-                <StatusBadge label="Active" tone="success" />
-              </View>
-              <Text style={typography.muted}>Expires in 45 min</Text>
-              <Text style={[typography.muted, { marginTop: spacing.xs }]}>
-                Reserved on {formatDateTime(nextReservation.createdAt)}
-              </Text>
-              <TouchableOpacity
-                style={{ marginTop: spacing.sm }}
-                onPress={() => navigation.navigate('ReservationDetail', { reservationId: nextReservation.id })}
-              >
-                <Text style={{ color: colors.primary, fontWeight: '600' }}>View details -></Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <Text style={typography.muted}>You have no active reservations right now.</Text>
-          )}
-        </Card>
-
-        <Text style={[typography.subtitle, styles.sectionLabel]}>Quick Actions</Text>
-        <View style={{ gap: spacing.sm }}>
-          <PrimaryButton title="Search Books" onPress={() => navigation.navigate('SearchBooks')} />
-          <PrimaryButton title="Book a Seat" onPress={() => navigation.navigate('SeatAvailability')} />
-          <OutlineButton title="My Reservations" onPress={() => navigation.navigate('MyReservations')} />
-          <OutlineButton title="Payment Details" onPress={() => navigation.navigate('PaymentDetails')} />
-        </View>
-
-        <Text style={[typography.subtitle, styles.sectionLabel]}>Recent Activity</Text>
-        <Card style={styles.activityCard}>
-          <ActivityRow icon="notifications-outline" title="Notifications" onPress={() => navigation.navigate('Notifications')} />
-          <View style={styles.separator} />
-          <ActivityRow icon="calendar-outline" title="My Reservations" onPress={() => navigation.navigate('MyReservations')} />
-          <View style={styles.separator} />
-          <ActivityRow icon="card-outline" title="Payment Details" onPress={() => navigation.navigate('PaymentDetails')} />
-        </Card>
-      </ScrollView>
-
-      <LogoutConfirmModal
-        visible={logoutVisible}
-        title="Log Out"
-        message="Are you sure you want to log out of your LibroSeat account?"
-        onCancel={() => setLogoutVisible(false)}
-        onConfirm={handleLogout}
-      />
-    </SafeAreaView>
+    <TouchableOpacity style={styles.actionCard} onPress={onPress}>
+      <View style={styles.actionIcon}>
+        <Ionicons name={icon} size={18} color={colors.primary} />
+      </View>
+      <Text style={styles.actionTitle}>{title}</Text>
+      <Text style={styles.actionSub}>{subtitle}</Text>
+    </TouchableOpacity>
   );
 }
 
-function ActivityRow({ icon, title, onPress }) {
+function ActivityRow({ icon, label, onPress }) {
   return (
     <TouchableOpacity style={styles.activityRow} onPress={onPress}>
-      <View style={styles.activityLeft}>
-        <Ionicons name={icon} size={21} color={colors.primary} />
-        <Text style={typography.body}>{title}</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+      <Ionicons name={icon} size={18} color={colors.textMuted} />
+      <Text style={styles.activityLabel}>{label}</Text>
+      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
     </TouchableOpacity>
+  );
+}
+
+export default function HomeDashboardScreen({ navigation }) {
+  const { user, profile } = useCurrentProfile();
+  const [next, setNext] = useState(null);
+  const [nextItem, setNextItem] = useState(null);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let active = true;
+    const unsubscribe = subscribeToReservations(user.id, (reservations) => {
+      if (!active) return;
+      const first = reservations.find((r) => r.status === 'confirmed') ?? null;
+      setNext(first);
+      if (first) getRelatedItem(first).then((i) => active && setNextItem(i));
+      else setNextItem(null);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [user?.id]);
+
+  const firstName = profile?.full_name ? profile.full_name.split(' ')[0] : 'there';
+
+  const nextTitle = next
+    ? next.type === 'seat'
+      ? `Seat ${nextItem?.seatNumber ?? ''}`.trim()
+      : nextItem?.title ?? 'Book reservation'
+    : null;
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <View style={styles.header}>
+        <View>
+          <Text style={typography.title}>Hi, {firstName}</Text>
+          <Text style={typography.muted}>Welcome back</Text>
+        </View>
+        <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={styles.bell}>
+          <Ionicons name="notifications-outline" size={20} color={colors.text} />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.container}>
+        <View style={styles.actionRow}>
+          <ActionCard
+            icon="search-outline"
+            title="Search Books"
+            subtitle="Browse the catalog"
+            onPress={() => navigation.navigate('Search')}
+          />
+          <ActionCard
+            icon="grid-outline"
+            title="Book a Seat"
+            subtitle="Reserve a spot"
+            onPress={() => navigation.navigate('SeatAvailability')}
+          />
+        </View>
+
+        {next ? (
+          <TouchableOpacity
+            style={styles.nextCard}
+            onPress={() => navigation.navigate('ReservationDetail', { reservationId: next.id })}
+          >
+            <View style={styles.nextIcon}>
+              <Ionicons name={next.type === 'seat' ? 'grid-outline' : 'book-outline'} size={20} color={colors.white} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.nextLabel}>YOUR NEXT RESERVATION</Text>
+              <Text style={styles.nextTitle}>{nextTitle}</Text>
+              {expiresInText(next.dueDate) ? (
+                <Text style={styles.nextSub}>{expiresInText(next.dueDate)}</Text>
+              ) : null}
+            </View>
+            <View style={styles.activeBadge}>
+              <Text style={styles.activeBadgeText}>Active</Text>
+            </View>
+          </TouchableOpacity>
+        ) : (
+          <View style={[styles.nextCard, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
+            <Text style={typography.muted}>You have no active reservations right now.</Text>
+          </View>
+        )}
+
+        <Text style={[typography.subtitle, styles.sectionLabel]}>Recent Activity</Text>
+        <ActivityRow icon="notifications-outline" label="Notifications" onPress={() => navigation.navigate('Notifications')} />
+        <ActivityRow icon="list-outline" label="My Reservations" onPress={() => navigation.navigate('MyReservations')} />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  container: { padding: spacing.lg, paddingBottom: spacing.xl },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
   },
-  iconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: 'center',
-    justifyContent: 'center',
+  bell: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  sectionLabel: { marginTop: spacing.lg, marginBottom: spacing.sm },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.md },
-  activityCard: { paddingVertical: spacing.sm },
-  activityRow: {
-    minHeight: 52,
+  container: { padding: spacing.lg, paddingBottom: spacing.xl },
+  actionRow: { flexDirection: 'row', gap: spacing.md },
+  actionCard: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+  },
+  actionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.primary + '1A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
+  actionTitle: { fontSize: 13, fontWeight: '700', color: colors.text },
+  actionSub: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+  nextCard: {
+    marginTop: spacing.md,
+    backgroundColor: colors.primary,
+    borderRadius: radius.lg,
+    padding: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: spacing.md,
   },
-  activityLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  separator: { height: 1, backgroundColor: colors.border },
+  nextIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nextLabel: { fontSize: 9, letterSpacing: 0.8, color: 'rgba(255,255,255,0.8)' },
+  nextTitle: { fontSize: 16, fontWeight: '700', color: colors.white },
+  nextSub: { fontSize: 11, color: 'rgba(255,255,255,0.85)' },
+  activeBadge: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  activeBadgeText: { color: colors.white, fontSize: 10, fontWeight: '700' },
+  sectionLabel: { marginTop: spacing.lg, marginBottom: spacing.sm },
+  activityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    gap: spacing.md,
+  },
+  activityLabel: { flex: 1, fontSize: 13, color: colors.text },
 });
