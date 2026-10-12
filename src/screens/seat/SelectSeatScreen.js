@@ -1,254 +1,184 @@
-
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Pressable,
-  SafeAreaView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { colors, spacing, typography, radius } from '../../theme/theme';
+import { createSeatReservation } from '../../services/seatReservationService';
 import { supabase } from '../../supabase/supabaseClient';
-import SeatCard from './SeatCard';
 
-const C = {
-  bg: '#F4F7F8', white: '#FFFFFF', teal: '#0F8B8D',
-  text: '#18323B', muted: '#71838A', border: '#DFE8EA',
-};
+function showAlert(title, message) {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}\n\n${message}`);
+  } else {
+    const { Alert } = require('react-native');
+    Alert.alert(title, message);
+  }
+}
 
 export default function SelectSeatScreen({ navigation, route }) {
-  const [seats, setSeats] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const [floor, setFloor] = useState('All');
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
-  const [roomFilter, setRoomFilter] = useState('');
-  const [reservedIds, setReservedIds] = useState([]);
+  const [success, setSuccess] = useState(false);
 
-  const loadSeats = useCallback(async (refresh = false) => {
-    refresh ? setRefreshing(true) : setLoading(true);
-    setError('');
+  const { seat, date, slot } = route.params || {};
 
-    try {
-      const { data, error: queryError } = await supabase
-        .from('library_seats')
-        .select(`
-          id, seat_number, seat_type, is_active,
-          reading_rooms (name, floor)
-        `)
-        .eq('is_active', true)
-        .order('seat_number');
-
-      if (queryError) throw queryError;
-      setSeats(data ?? []);
-      const today = new Date();
-      const bookingDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      const { data: bookings } = await supabase.from('seat_reservations')
-        .select('seat_id').eq('booking_date', bookingDate).eq('status', 'confirmed');
-      const reserved = (bookings ?? []).map((booking) => String(booking.seat_id));
-      setReservedIds(reserved);
-      setSelected((current) =>
-        current
-          ? (reserved.includes(String(current.id)) ? null : (data ?? []).find((s) => s.id === current.id) ?? null)
-          : (data ?? []).find((s) => String(s.id) === String(route?.params?.selectedSeatId) && !reserved.includes(String(s.id))) ?? null
-      );
-    } catch (e) {
-      setError(e.message || 'Unable to load seats.');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [route?.params?.selectedSeatId]);
-
-  useEffect(() => {
-    loadSeats();
-  }, [loadSeats]);
-
-  useEffect(() => {
-    const room = route?.params?.room;
-    if (room) setRoomFilter(room);
-    if (route?.params?.floor != null) setFloor(String(route.params.floor));
-  }, [route?.params?.room, route?.params?.floor]);
-
-  const floors = useMemo(() => [
-    'All',
-    ...new Set(
-      seats.map((s) => s.reading_rooms?.floor)
-        .filter((v) => v !== null && v !== undefined)
-        .map(String)
-    ),
-  ], [seats]);
-
-  const visibleSeats = useMemo(() => seats.filter((seat) => {
-    const room = seat.reading_rooms?.name ?? '';
-    const number = String(seat.seat_number ?? '');
-    const type = seat.seat_type ?? '';
-
-    return (
-      (floor === 'All' || String(seat.reading_rooms?.floor) === floor) &&
-      (!roomFilter || seat.reading_rooms?.name === roomFilter) &&
-      `${number} ${room} ${type}`.toLowerCase().includes(search.trim().toLowerCase())
-    );
-  }), [seats, floor, search]);
-
-  const continueBooking = () => {
-    if (!selected) {
-      Alert.alert('Choose a seat', 'Select a seat before continuing.');
+  async function handleConfirm() {
+    if (!seat || !date || !slot) {
+      setError('Missing booking details. Please go back and try again.');
       return;
     }
 
-    navigation.navigate('SeatConfirmation', { seat: selected });
-  };
+    setLoading(true);
+    setError('');
+    try {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser();
+      if (authErr || !user) throw new Error('You must be logged in to book a seat.');
 
-  if (loading) {
+      await createSeatReservation(seat.id, user.id, date, slot);
+      setSuccess(true);
+    } catch (e) {
+      console.warn('Booking error:', e);
+      setError(e.message || 'Could not complete seat booking. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (success) {
     return (
-      <SafeAreaView style={styles.center}>
-        <StatusBar barStyle="dark-content" />
-        <ActivityIndicator size="large" color={C.teal} />
-        <Text style={styles.muted}>Loading seats...</Text>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.successContainer}>
+          <View style={styles.successIcon}>
+            <Text style={styles.successIconText}>✓</Text>
+          </View>
+          <Text style={styles.successTitle}>Booking Confirmed!</Text>
+          <Text style={styles.successSub}>
+            Your seat has been reserved. Remember to check in within 15 minutes of your session start time.
+          </Text>
+          <View style={styles.successDetail}>
+            <Text style={styles.successDetailLabel}>Seat</Text>
+            <Text style={styles.successDetailValue}>Carrel {seat?.seat_number}</Text>
+          </View>
+          <View style={styles.successDetail}>
+            <Text style={styles.successDetailLabel}>Date</Text>
+            <Text style={styles.successDetailValue}>{date}</Text>
+          </View>
+          <View style={styles.successDetail}>
+            <Text style={styles.successDetailLabel}>Time</Text>
+            <Text style={styles.successDetailValue}>{slot?.label}</Text>
+          </View>
+          <TouchableOpacity style={styles.doneBtn} onPress={() => navigation.popToTop()}>
+            <Text style={styles.doneBtnText}>Done</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
-      <FlatList
-        data={visibleSeats}
-        keyExtractor={(item) => String(item.id)}
-        numColumns={3}
-        columnWrapperStyle={{ gap: 12 }}
-        contentContainerStyle={styles.list}
-        refreshing={refreshing}
-        onRefresh={() => loadSeats(true)}
-        renderItem={({ item }) => (
-          <SeatCard
-            seat={item}
-            selected={selected?.id === item.id}
-            disabled={reservedIds.includes(String(item.id))}
-            onPress={() => setSelected((old) => old?.id === item.id ? null : item)}
-          />
-        )}
-        ListHeaderComponent={
-          <View>
-            <Text style={styles.brand}>LIBROSEAT / SEATING</Text>
-            <Text style={styles.title}>Choose your seat</Text>
-            <Text style={styles.subtitle}>
-              {roomFilter ? `${roomFilter}${route?.params?.floor != null ? ` · Floor ${route.params.floor}` : ''}` : 'Pick a seat in your preferred reading room.'}
-            </Text>
+      <View style={styles.content}>
+        <Text style={styles.title}>Confirm Seat Booking</Text>
+        <Text style={styles.subtitle}>Please review your reservation details:</Text>
 
-            <TextInput
-              value={search}
-              onChangeText={setSearch}
-              placeholder="Search seat, room or type"
-              placeholderTextColor="#91A0A8"
-              style={styles.search}
-            />
+        <View style={styles.card}>
+          <Text style={styles.seatNum}>Carrel {seat?.seat_number}</Text>
+          <Text style={styles.roomName}>{seat?.zone || 'General'}</Text>
 
-            <Text style={styles.section}>Select floor</Text>
-            <FlatList
-              horizontal
-              data={floors}
-              keyExtractor={(item) => item}
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 8, paddingVertical: 13 }}
-              renderItem={({ item }) => (
-                <Pressable
-                  onPress={() => setFloor(item)}
-                  style={[styles.chip, floor === item && styles.chipActive]}
-                >
-                  <Text style={[styles.chipText, floor === item && styles.chipTextActive]}>
-                    {item === 'All' ? 'All floors' : `Floor ${item}`}
-                  </Text>
-                </Pressable>
-              )}
-            />
+          <View style={styles.divider} />
 
-            <View style={styles.sectionRow}>
-              <Text style={styles.section}>Seats</Text>
-              <Text style={styles.muted}>{visibleSeats.length} active</Text>
-            </View>
-
-            {error ? (
-              <View style={styles.error}>
-                <Text style={{ color: '#A52B32' }}>{error}</Text>
-                <Pressable onPress={() => loadSeats()}>
-                  <Text style={{ color: '#A52B32', fontWeight: '800', marginTop: 8 }}>
-                    Try again
-                  </Text>
-                </Pressable>
-              </View>
-            ) : null}
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Date</Text>
+            <Text style={styles.detailValue}>{date}</Text>
           </View>
-        }
-        ListEmptyComponent={
-          !error ? (
-            <Text style={styles.empty}>No seats match your search.</Text>
-          ) : null
-        }
-        ListFooterComponent={<View style={{ height: selected ? 110 : 25 }} />}
-      />
-
-      {selected && (
-        <View style={styles.bottom}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.muted}>SELECTED SEAT</Text>
-            <Text style={styles.selectedName}>{selected.seat_number}</Text>
-            <Text numberOfLines={1} style={styles.muted}>
-              {selected.reading_rooms?.name ?? 'Reading room'}
-            </Text>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Time</Text>
+            <Text style={styles.detailValue}>{slot?.label}</Text>
           </View>
-          <Pressable onPress={continueBooking} style={styles.button}>
-            <Text style={styles.buttonText}>Continue →</Text>
-          </Pressable>
         </View>
-      )}
+
+        <View style={styles.infoBox}>
+          <Text style={styles.infoText}>
+            ⏱ You must check in within 15 minutes of your session start time, otherwise this seat will be automatically released and marked as a No-Show.
+          </Text>
+        </View>
+
+        {error ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.footer}>
+        <TouchableOpacity style={styles.cancelBtn} onPress={() => navigation.goBack()} disabled={loading}>
+          <Text style={styles.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.confirmBtn, loading && styles.btnDisabled]}
+          onPress={handleConfirm}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <Text style={styles.confirmBtnText}>Confirm Booking</Text>
+          )}
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: C.bg },
-  center: {
-    flex: 1, backgroundColor: C.bg, alignItems: 'center',
-    justifyContent: 'center', gap: 12,
+  safe: { flex: 1, backgroundColor: colors.background },
+  content: { flex: 1, padding: spacing.lg },
+  title: { ...typography.h1, color: colors.text, marginBottom: spacing.xs, marginTop: spacing.lg },
+  subtitle: { ...typography.body, color: colors.textMuted, marginBottom: spacing.lg },
+  card: {
+    backgroundColor: colors.white, padding: spacing.lg, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg, alignItems: 'center'
   },
-  list: { padding: 20, paddingBottom: 25, flexGrow: 1, gap: 12 },
-  brand: { color: C.teal, fontSize: 10, fontWeight: '900', letterSpacing: 2, marginTop: 8 },
-  title: { color: C.text, fontSize: 29, fontWeight: '900', marginTop: 12 },
-  subtitle: { color: C.muted, fontSize: 13, marginTop: 7, lineHeight: 20 },
-  search: {
-    backgroundColor: C.white, borderRadius: 14, borderWidth: 1,
-    borderColor: C.border, padding: 15, marginTop: 22, color: C.text,
+  seatNum: { fontSize: 22, fontWeight: '700', color: colors.primary, marginBottom: 4 },
+  roomName: { ...typography.body, color: colors.textMuted, marginBottom: spacing.md },
+  divider: { height: 1, backgroundColor: colors.border, width: '100%', marginBottom: spacing.md },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 8 },
+  detailLabel: { color: colors.textMuted, fontWeight: '600' },
+  detailValue: { color: colors.text, fontWeight: '700' },
+  infoBox: { backgroundColor: '#FFFBEB', padding: spacing.md, borderRadius: radius.sm, marginBottom: spacing.md },
+  infoText: { fontSize: 13, color: '#92400E', lineHeight: 20 },
+  errorBox: { backgroundColor: '#FEE2E2', padding: spacing.md, borderRadius: radius.sm },
+  errorText: { color: '#DC2626', fontSize: 13, fontWeight: '600' },
+  footer: { padding: spacing.lg, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.white, gap: spacing.sm },
+  cancelBtn: {
+    paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
+    alignItems: 'center'
   },
-  section: { color: C.text, fontSize: 16, fontWeight: '800' },
-  chip: {
-    backgroundColor: C.white, borderWidth: 1, borderColor: C.border,
-    borderRadius: 12, paddingVertical: 11, paddingHorizontal: 16,
+  cancelBtnText: { color: colors.textMuted, fontWeight: '600', fontSize: 15 },
+  confirmBtn: {
+    paddingVertical: 14, borderRadius: radius.md, backgroundColor: colors.primary,
+    alignItems: 'center', justifyContent: 'center'
   },
-  chipActive: { backgroundColor: C.teal, borderColor: C.teal },
-  chipText: { color: C.muted, fontSize: 12, fontWeight: '700' },
-  chipTextActive: { color: C.white },
-  sectionRow: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between', marginBottom: 2,
+  confirmBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  btnDisabled: { opacity: 0.6 },
+
+  // Success state
+  successContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
+  successIcon: {
+    width: 80, height: 80, borderRadius: 40, backgroundColor: '#D1FAE5',
+    alignItems: 'center', justifyContent: 'center', marginBottom: spacing.lg
   },
-  muted: { color: C.muted, fontSize: 12 },
-  error: { backgroundColor: '#FDECEC', padding: 14, borderRadius: 12, marginVertical: 8 },
-  empty: { color: C.muted, textAlign: 'center', padding: 24 },
-  bottom: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: C.white, borderTopWidth: 1, borderColor: C.border,
-    paddingHorizontal: 20, paddingTop: 14, paddingBottom: 20,
-    flexDirection: 'row', alignItems: 'center', gap: 12,
+  successIconText: { fontSize: 36, color: '#059669' },
+  successTitle: { fontSize: 24, fontWeight: '700', color: colors.text, marginBottom: spacing.sm },
+  successSub: { fontSize: 14, color: colors.textMuted, textAlign: 'center', lineHeight: 22, marginBottom: spacing.xl },
+  successDetail: {
+    flexDirection: 'row', justifyContent: 'space-between', width: '100%',
+    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border
   },
-  selectedName: { color: C.text, fontWeight: '900', fontSize: 19, marginVertical: 3 },
-  button: { backgroundColor: C.teal, borderRadius: 14, paddingVertical: 15, paddingHorizontal: 18 },
-  buttonText: { color: C.white, fontWeight: '800', fontSize: 13 },
+  successDetailLabel: { color: colors.textMuted, fontSize: 14 },
+  successDetailValue: { color: colors.text, fontWeight: '700', fontSize: 14 },
+  doneBtn: {
+    marginTop: spacing.xl, backgroundColor: colors.primary, paddingVertical: 14,
+    paddingHorizontal: spacing.xl * 2, borderRadius: radius.md
+  },
+  doneBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 }
 });
