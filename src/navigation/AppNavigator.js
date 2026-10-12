@@ -23,7 +23,7 @@ import SelectSeatScreen from '../screens/seat/SelectSeatScreen';
 import SeatConfirmationScreen from '../screens/seat/SeatConfirmationScreen';
 
 import NotificationDetailScreen from '../screens/home_account/NotificationDetailScreen';
-import MyReservationsScreen from '../screens/home_account/MyReservationsScreen';
+import MyReservationsScreen from '../screens/seat/MyReservationsScreen';
 import ReservationDetailScreen from '../screens/home_account/ReservationDetailScreen';
 import PersonalInfoScreen from '../screens/home_account/PersonalInfoScreen';
 import SettingsScreen from '../screens/home_account/SettingsScreen';

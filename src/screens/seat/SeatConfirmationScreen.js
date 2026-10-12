@@ -1,6 +1,7 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   ActivityIndicator,
   Alert,
   Pressable,
@@ -12,7 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { supabase } from '../../supabase/supabaseClient';
+import { createSeatReservation } from './seatReservationService';
 
 const C = {
   bg: '#F4F7F8', white: '#FFFFFF', teal: '#0F8B8D',
@@ -34,8 +35,21 @@ export default function SeatConfirmationScreen({ route, navigation }) {
   const [endTime, setEndTime] = useState('10:00');
   const [saving, setSaving] = useState(false);
   const [confirmed, setConfirmed] = useState(null);
+  const savingRef = useRef(false);
+  const successScale = useRef(new Animated.Value(0.75)).current;
+
+  useEffect(() => {
+    if (!confirmed) return;
+    Animated.spring(successScale, {
+      toValue: 1,
+      useNativeDriver: true,
+      friction: 5,
+      tension: 100,
+    }).start();
+  }, [confirmed, successScale]);
 
   const submit = async () => {
+    if (savingRef.current) return;
     if (!seat?.id) {
       Alert.alert('Seat missing', 'Return to seat selection and choose a seat.');
       return;
@@ -64,51 +78,30 @@ export default function SeatConfirmationScreen({ route, navigation }) {
       return;
     }
 
+    if (date === dateString(new Date())) {
+      const now = new Date();
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      if (startTime <= currentTime) {
+        Alert.alert('Invalid time', 'Choose a start time later than the current time.');
+        return;
+      }
+    }
+
+    savingRef.current = true;
     setSaving(true);
 
     try {
-      const { data: authData, error: authError } =
-        await supabase.auth.getUser();
-
-      if (authError) throw authError;
-
-      const user = authData?.user;
-
-      if (!user) {
-        Alert.alert('Login required', 'Please sign in before booking a seat.');
-        return;
-      }
-
-      const { data: reservation, error } = await supabase
-        .from('seat_reservations')
-        .insert({
-          seat_id: seat.id,
-          user_id: user.id,
-          booking_date: date,
-          start_time: startTime,
-          end_time: endTime,
-          status: 'confirmed',
-        })
-        .select()
-        .single();
-
-      if (error) {
-        if (error.code === '23505' || error.code === '23P01') {
-          Alert.alert(
-            'Seat unavailable',
-            'This seat may already be booked for that time. Please choose another seat or time.'
-          );
-        } else {
-          throw error;
-        }
-        return;
-      }
-
+      const reservation = await createSeatReservation({
+        seatId: seat.id,
+        bookingDate: date,
+        startTime,
+        endTime,
+      });
       setConfirmed(reservation);
     } catch (e) {
-      console.error('Reservation failed:', e.message);
       Alert.alert('Booking failed', e.message || 'Please try again.');
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -128,7 +121,7 @@ export default function SeatConfirmationScreen({ route, navigation }) {
     return <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
       <View style={styles.successPage}>
-        <View style={styles.successMark}><Text style={styles.check}>✓</Text></View>
+        <Animated.View style={[styles.successMark, { transform: [{ scale: successScale }] }]}><Text style={styles.check}>✓</Text></Animated.View>
         <Text style={styles.title}>Reservation confirmed</Text>
         <Text style={styles.subtitle}>Your seat has been reserved successfully.</Text>
         <View style={styles.successCard}>
