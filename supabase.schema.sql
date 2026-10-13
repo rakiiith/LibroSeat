@@ -794,141 +794,58 @@ using (
   auth.uid() = user_id
 );
 
+alter table public.notifications enable row level security;
 
+drop policy if exists "Users read own notifications" on public.notifications;
+create policy "Users read own notifications"
+  on public.notifications for select
+  to authenticated
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users update own notifications" on public.notifications;
+create policy "Users update own notifications"
+  on public.notifications for update
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists "Staff manage all notifications" on public.notifications;
+create policy "Staff manage all notifications"
+  on public.notifications for all
+  to authenticated
+  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'staff'))
+  with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'staff'));
 -- ============================================================
--- 20. CANCEL RESERVATION FUNCTION
--- ============================================================
-
-create or replace function
-public.restore_cancelled_book_copy()
-
-returns trigger
-
-language plpgsql
-
-security definer
-
-set search_path = public
-
-as $$
-
-begin
-
-  if new.type = 'book'
-
-     and old.status = 'confirmed'
-
-     and new.status = 'cancelled'
-
-     and new.ref_id is not null
-
-  then
-
-    update public.books
-
-    set available_copies =
-      least(
-        coalesce(total_copies, 0),
-        coalesce(available_copies, 0) + 1
-      )
-
-    where id = new.ref_id;
-
-
-    update public.book_reservations
-
-    set status = 'cancelled'
-
-    where reservation_id = new.id;
-
-  end if;
-
-
-  return new;
-
-end;
-
-$$;
-
-
--- ============================================================
--- 21. CANCEL TRIGGER
+-- 6. ADVANCED SEAT RESERVATION SYSTEM
 -- ============================================================
 
-drop trigger if exists
-reservations_restore_book_copy
-on public.reservations;
+-- A. Update the existing seats table to match the new requirements
+ALTER TABLE public.seats RENAME COLUMN room TO zone;
+ALTER TABLE public.seats RENAME COLUMN is_available TO is_blocked;
+ALTER TABLE public.seats ALTER COLUMN is_blocked SET DEFAULT false;
+UPDATE public.seats SET is_blocked = false;
+ALTER TABLE public.seats ADD CONSTRAINT unique_seat_number UNIQUE (seat_number);
 
-create trigger
-reservations_restore_book_copy
+-- B. Create a dedicated seat_reservations table (separate from books to avoid breaking existing book features)
+CREATE TABLE IF NOT EXISTS public.seat_reservations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  seat_id uuid NOT NULL REFERENCES public.seats(id) ON DELETE CASCADE,
+  student_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  reservation_date date NOT NULL,
+  start_time time NOT NULL,
+  end_time time NOT NULL,
+  status text NOT NULL DEFAULT 'reserved' CHECK (status IN ('reserved', 'checked_in', 'completed', 'cancelled', 'no_show')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT unique_seat_timeslot UNIQUE (seat_id, reservation_date, start_time)
+);
 
-after update of status
+ALTER TABLE public.seat_reservations ENABLE ROW LEVEL SECURITY;
 
-on public.reservations
+-- C. Row Level Security Policies for seat_reservations
+CREATE POLICY "Students read all seat reservations" ON public.seat_reservations FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Students create own seat reservations" ON public.seat_reservations FOR INSERT TO authenticated WITH CHECK (auth.uid() = student_id);
+CREATE POLICY "Students cancel own seat reservations" ON public.seat_reservations FOR UPDATE TO authenticated USING (auth.uid() = student_id) WITH CHECK (auth.uid() = student_id);
+CREATE POLICY "Staff manage all seat reservations" ON public.seat_reservations FOR ALL TO authenticated 
+  USING (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'staff'))
+  WITH CHECK (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'staff'));
 
-for each row
-
-execute function
-public.restore_cancelled_book_copy();
-
-
--- ============================================================
--- 22. RELOAD POSTGREST SCHEMA
--- ============================================================
-
-notify pgrst, 'reload schema';
-
-
-commit;
-
-
--- ============================================================
--- 23. VERIFY RPC FUNCTION
--- ============================================================
-
-select
-  routine_schema,
-  routine_name,
-  routine_type
-
-from information_schema.routines
-
-where routine_schema = 'public'
-
-and routine_name = 'reserve_book';
-
-
--- ============================================================
--- 24. VERIFY EXACT FUNCTION SIGNATURE
--- ============================================================
-
-select
-  p.proname as function_name,
-  pg_get_function_identity_arguments(
-    p.oid
-  ) as arguments
-
-from pg_proc p
-
-join pg_namespace n
-  on n.oid = p.pronamespace
-
-where n.nspname = 'public'
-
-and p.proname = 'reserve_book';
-
-
--- ============================================================
--- 25. VERIFY EXECUTE PERMISSION
--- ============================================================
-
-select
-  routine_schema,
-  routine_name,
-  routine_privileges
-
-from information_schema.routines
-
-where routine_schema = 'public'
-
-and routine_name = 'reserve_book';
