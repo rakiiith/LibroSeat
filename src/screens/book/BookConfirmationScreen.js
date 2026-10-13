@@ -1,20 +1,108 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { Card, PrimaryButton } from '../../components/UIKit';
+import { SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { colors, radius, spacing, typography } from '../../theme/theme';
 
-export default function BookConfirmationScreen({ route, navigation }) {
-  const { book, reservationId } = route.params ?? {};
-  return <SafeAreaView style={styles.safe} edges={['bottom']}><View style={styles.container}>
-    <View style={styles.success}><Ionicons name="checkmark" size={44} color={colors.white} /></View>
-    <Text style={styles.title}>Reservation confirmed</Text>
-    <Text style={typography.muted}>Your book hold has been placed.</Text>
-    <Card style={styles.card}><Text style={typography.subtitle}>{book?.title || 'Book reservation'}</Text><Text style={typography.muted}>by {book?.author || 'Unknown author'}</Text>{reservationId ? <Text style={styles.id}>Reservation #{String(reservationId).slice(0, 8).toUpperCase()}</Text> : null}</Card>
-    <PrimaryButton title="View my reservations" onPress={() => navigation.reset({ index: 1, routes: [{ name: 'Home' }, { name: 'MyReservations' }] })} />
-    <Text onPress={() => navigation.navigate('SearchBooks')} style={styles.link}>Continue browsing books</Text>
-  </View></SafeAreaView>;
+function formatDate(value) {
+  if (!value) return '—';
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-const styles = StyleSheet.create({ safe: { flex: 1, backgroundColor: colors.background }, container: { flex: 1, padding: spacing.lg, alignItems: 'center', justifyContent: 'center', gap: spacing.md }, success: { width: 82, height: 82, borderRadius: 41, backgroundColor: colors.success, alignItems: 'center', justifyContent: 'center' }, title: { ...typography.title, fontSize: 25, textAlign: 'center' }, card: { alignSelf: 'stretch', gap: spacing.sm }, id: { ...typography.muted, marginTop: spacing.xs }, link: { color: colors.primary, fontWeight: '700', padding: spacing.sm } });
+export default function BookConfirmationScreen({ route, navigation }) {
+  const { book, reservation } = route?.params || {};
+  const reservationCode =
+    reservation?.reservation_code || reservation?.reservationCode || reservation?.id || '—';
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <View style={styles.container}>
+        <View style={styles.successIcon}>
+          <Text style={styles.tick}>✓</Text>
+        </View>
+        <Text style={styles.heading}>Reservation Confirmed!</Text>
+        <Text style={styles.subtitle}>Your book has been successfully reserved.</Text>
+
+        <View style={styles.card}>
+          <Text style={styles.bookTitle}>{reservation?.book_title || book?.title || 'Book'}</Text>
+          <Text style={styles.author}>{reservation?.book_author || book?.author || 'Unknown author'}</Text>
+          <Detail label="Reservation code" value={reservationCode} />
+          <Detail label="Reservation date" value={formatDate(reservation?.reservation_date)} />
+          <Detail label="Pickup before" value={formatDate(reservation?.pickup_before)} />
+          {book?.shelf ? <Detail label="Shelf" value={book.shelf} /> : null}
+        </View>
+
+        <TouchableOpacity
+          accessibilityRole="button"
+          style={styles.primary}
+          onPress={() => navigation.navigate('MyReservations')}
+        >
+          <Text style={styles.primaryText}>View My Reservations</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          accessibilityRole="button"
+          style={styles.secondary}
+          onPress={() => navigation.popToTop()}
+        >
+          <Text style={styles.secondaryText}>Back to Home</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function Detail({ label, value }) {
+  return (
+    <View style={styles.detailRow}>
+      <Text style={styles.label}>{label}</Text>
+      <Text style={styles.value}>{value}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1, justifyContent: 'center', padding: spacing.lg },
+  successIcon: {
+    width: 88,
+    height: 88,
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 44,
+    backgroundColor: colors.success + '18',
+  },
+  tick: { color: colors.success, fontSize: 42, fontWeight: '700' },
+  heading: { ...typography.title, textAlign: 'center', marginTop: spacing.md },
+  subtitle: { ...typography.muted, textAlign: 'center', marginTop: spacing.xs },
+  card: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginTop: spacing.xl,
+  },
+  bookTitle: { ...typography.subtitle, fontSize: 19 },
+  author: { ...typography.muted, marginTop: spacing.xs, marginBottom: spacing.md },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.sm },
+  label: { ...typography.muted },
+  value: { ...typography.body, textAlign: 'right', flexShrink: 1, marginLeft: spacing.md },
+  primary: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+    marginTop: spacing.xl,
+  },
+  primaryText: { color: colors.white, fontWeight: '600', fontSize: 15 },
+  secondary: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    backgroundColor: colors.card,
+    marginTop: spacing.sm,
+  },
+  secondaryText: { ...typography.body, fontWeight: '600' },
+});
