@@ -7,6 +7,8 @@ import { colors, spacing, radius } from '../../theme/theme';
 import { fetchAdminSeatData, blockSeat, updateSeatReservationStatus, TIME_SLOTS } from '../../services/seatReservationService';
 import { supabase } from '../../supabase/supabaseClient';
 import { uniqueChannelName } from '../../supabase/realtimeUtil';
+import LogoutConfirmModal from '../../components/LogoutConfirmModal';
+import { signOutAccount } from '../../supabase/authService';
 
 function formatDateKey(d) {
   const y = d.getFullYear();
@@ -36,6 +38,7 @@ export default function SeatAllocationScreen({ route }) {
   const [seats, setSeats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedSeat, setSelectedSeat] = useState(null);
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   
   const initialDate = route?.params?.date || formatDateKey(new Date());
   const [selectedDate, setSelectedDate] = useState(initialDate);
@@ -181,9 +184,14 @@ export default function SeatAllocationScreen({ route }) {
             <Ionicons name="refresh-outline" size={20} color={colors.primary} />
           </TouchableOpacity>
           <Ionicons name="search" size={20} color={colors.text} style={styles.iconMargin} />
-          <View style={styles.profileAvatar}>
+          <TouchableOpacity 
+            style={styles.profileAvatar}
+            onPress={() => setLogoutModalVisible(true)}
+            accessibilityRole="button"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Ionicons name="person" size={14} color={colors.white} />
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -389,6 +397,14 @@ export default function SeatAllocationScreen({ route }) {
         )}
 
       </ScrollView>
+
+      <LogoutConfirmModal
+        visible={logoutModalVisible}
+        title="Staff Sign Out"
+        message="Are you sure you want to sign out of the staff administration portal?"
+        onCancel={() => setLogoutModalVisible(false)}
+        onConfirm={signOutAccount}
+      />
     </SafeAreaView>
   );
 }
@@ -412,10 +428,11 @@ const styles = StyleSheet.create({
   dashboardTitle: { fontSize: 16, fontWeight: '700', color: '#1F2937' },
   
   headerIcons: { flexDirection: 'row', alignItems: 'center' },
-  iconMargin: { marginRight: spacing.md },
+  iconMargin: { marginRight: spacing.md, cursor: 'pointer' },
   profileAvatar: { 
     width: 28, height: 28, borderRadius: 14, 
-    backgroundColor: '#009688', justifyContent: 'center', alignItems: 'center' 
+    backgroundColor: '#009688', justifyContent: 'center', alignItems: 'center',
+    cursor: 'pointer',
   },
 
   scrollContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl, paddingTop: spacing.md },
