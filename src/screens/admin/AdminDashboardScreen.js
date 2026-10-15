@@ -403,4 +403,4 @@ const styles = StyleSheet.create({
   feedDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
   feedItemText: { flex: 1, fontSize: 13, color: colors.text },
   feedTimeText: { fontSize: 11, color: colors.textMuted, marginLeft: 8 },
-});
+});

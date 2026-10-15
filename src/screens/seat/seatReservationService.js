@@ -1,5 +1,7 @@
 import { supabase } from '../../supabase/supabaseConfig';
 
+export { TIME_SLOTS } from '../../services/seatReservationService';
+
 export function localDateString(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -16,35 +18,57 @@ export async function getCurrentUser() {
 
 export async function fetchActiveSeats() {
   const { data, error } = await supabase
-    .from('library_seats')
-    .select('id, seat_number, seat_type, is_active, reading_rooms(name, floor)')
-    .eq('is_active', true)
+    .from('seats')
+    .select('id, seat_number, zone, is_blocked')
+    .eq('is_blocked', false)
     .order('seat_number');
   if (error) throw error;
   return data ?? [];
 }
 
 export async function fetchReservedSeatIds(bookingDate = localDateString()) {
-  const { data, error } = await supabase.rpc('get_reserved_seat_ids', {
-    p_booking_date: bookingDate,
-  });
+  const { data, error } = await supabase
+    .from('seat_reservations')
+    .select('seat_id')
+    .eq('reservation_date', bookingDate)
+    .in('status', ['reserved', 'checked_in', 'confirmed']);
   if (error) throw error;
-  return (data ?? []).map(value => String(value));
+  return (data ?? []).map(r => String(r.seat_id));
 }
 
 export async function createSeatReservation({ seatId, bookingDate, startTime, endTime }) {
   const user = await getCurrentUser();
+
+  // Standardize HH:MM to HH:MM:SS
+  const sTime = startTime.length === 5 ? `${startTime}:00` : startTime;
+  const eTime = endTime.length === 5 ? `${endTime}:00` : endTime;
+
+  // Check for existing overlapping active reservation on the same seat
+  const { data: conflicts, error: checkErr } = await supabase
+    .from('seat_reservations')
+    .select('id')
+    .eq('seat_id', seatId)
+    .eq('reservation_date', bookingDate)
+    .lt('start_time', eTime)
+    .gt('end_time', sTime)
+    .in('status', ['reserved', 'checked_in', 'confirmed']);
+
+  if (checkErr) throw checkErr;
+  if (conflicts && conflicts.length > 0) {
+    throw new Error('This seat is already reserved for an overlapping time. Choose another seat or time.');
+  }
+
   const { data, error } = await supabase
     .from('seat_reservations')
     .insert({
       seat_id: seatId,
-      user_id: user.id,
-      booking_date: bookingDate,
-      start_time: startTime,
-      end_time: endTime,
-      status: 'confirmed',
+      student_id: user.id,
+      reservation_date: bookingDate,
+      start_time: sTime,
+      end_time: eTime,
+      status: 'reserved',
     })
-    .select('id, seat_id, user_id, booking_date, start_time, end_time, status')
+    .select('id, seat_id, student_id, reservation_date, start_time, end_time, status')
     .single();
 
   if (error) {
@@ -61,10 +85,10 @@ export async function createSeatReservation({ seatId, bookingDate, startTime, en
 export async function fetchMySeatReservations(userId) {
   const { data, error } = await supabase
     .from('seat_reservations')
-    .select(`id, seat_id, booking_date, start_time, end_time, status,
-      library_seats (seat_number, seat_type, reading_rooms (name, floor))`)
-    .eq('user_id', userId)
-    .order('booking_date', { ascending: true })
+    .select(`id, seat_id, reservation_date, start_time, end_time, status,
+      seats (seat_number, zone)`)
+    .eq('student_id', userId)
+    .order('reservation_date', { ascending: true })
     .order('start_time', { ascending: true });
   if (error) throw error;
   return data ?? [];
@@ -75,8 +99,8 @@ export async function cancelSeatReservation(reservationId, userId) {
     .from('seat_reservations')
     .update({ status: 'cancelled' })
     .eq('id', reservationId)
-    .eq('user_id', userId)
-    .eq('status', 'confirmed')
+    .eq('student_id', userId)
+    .in('status', ['reserved', 'confirmed'])
     .select('id')
     .maybeSingle();
   if (error) throw error;
@@ -91,7 +115,7 @@ export function subscribeToSeatReservations(onChange, userId) {
       event: '*',
       schema: 'public',
       table: 'seat_reservations',
-      filter: `user_id=eq.${userId}`,
+      filter: `student_id=eq.${userId}`,
     }, onChange)
     .subscribe();
 
@@ -103,9 +127,15 @@ export function subscribeToSeatReservations(onChange, userId) {
 
 export function subscribeToSeatAvailability(onChange) {
   const channel = supabase
-    .channel('seat-availability', { config: { private: false } })
-    .on('broadcast', { event: 'seat_reservation_changed' }, onChange)
+    .channel('seat-availability-realtime')
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'seat_reservations',
+    }, onChange)
     .subscribe();
 
-  return () => supabase.removeChannel(channel);
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
