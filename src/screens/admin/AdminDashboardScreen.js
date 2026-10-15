@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { colors, spacing, radius, typography } from '../../theme/theme';
 import { useCurrentProfile } from '../../hooks/useCurrentProfile';
 import { supabase } from '../../supabase/supabaseClient';
+import { uniqueChannelName } from '../../supabase/realtimeUtil';
 
 export default function AdminDashboardScreen({ navigation }) {
   const { profile } = useCurrentProfile();
@@ -20,59 +22,77 @@ export default function AdminDashboardScreen({ navigation }) {
 
   const [seatStats, setSeatStats] = useState({ total: 0, occupied: 0, reserved: 0, free: 0, pct: 0 });
 
-  useEffect(() => {
-    async function fetchStats() {
-      try {
-        const { count: booksCount } = await supabase
-          .from('books')
-          .select('*', { count: 'exact', head: true });
+  const fetchStats = useCallback(async () => {
+    try {
+      const { count: booksCount } = await supabase
+        .from('books')
+        .select('*', { count: 'exact', head: true });
 
-        const { count: activeHolds } = await supabase
-          .from('reservations')
-          .select('*', { count: 'exact', head: true })
-          .in('status', ['confirmed']);
-          
-        // Real seat stats from new seat_reservations table (today)
-        const today = new Date().toISOString().split('T')[0];
-        const { data: allSeats } = await supabase.from('seats').select('id, is_blocked');
-        const { data: activeSeatsRes } = await supabase
-          .from('seat_reservations')
-          .select('seat_id, status')
-          .eq('reservation_date', today)
-          .in('status', ['reserved', 'checked_in']);
+      const { count: activeHolds } = await supabase
+        .from('reservations')
+        .select('*', { count: 'exact', head: true })
+        .in('status', ['confirmed']);
+        
+      // Real seat stats from new seat_reservations table (today)
+      const today = new Date().toISOString().split('T')[0];
+      const { data: allSeats } = await supabase.from('seats').select('id, is_blocked');
+      const { data: activeSeatsRes } = await supabase
+        .from('seat_reservations')
+        .select('seat_id, status')
+        .eq('reservation_date', today)
+        .in('status', ['reserved', 'checked_in']);
 
-        const totalSeats = (allSeats || []).filter(s => !s.is_blocked).length;
-        const occupiedNow = (activeSeatsRes || []).filter(r => r.status === 'checked_in').length;
-        const reservedNow = (activeSeatsRes || []).filter(r => r.status === 'reserved').length;
-        const freeNow = totalSeats - occupiedNow - reservedNow;
-        const pct = totalSeats > 0 ? Math.round(((occupiedNow + reservedNow) / totalSeats) * 100) : 0;
+      const totalSeats = (allSeats || []).filter(s => !s.is_blocked).length;
+      const occupiedNow = (activeSeatsRes || []).filter(r => r.status === 'checked_in').length;
+      const reservedNow = (activeSeatsRes || []).filter(r => r.status === 'reserved').length;
+      const freeNow = totalSeats - occupiedNow - reservedNow;
+      const pct = totalSeats > 0 ? Math.round(((occupiedNow + reservedNow) / totalSeats) * 100) : 0;
 
-        setSeatStats({ total: totalSeats, occupied: occupiedNow, reserved: reservedNow, free: freeNow < 0 ? 0 : freeNow, pct });
+      setSeatStats({ total: totalSeats, occupied: occupiedNow, reserved: reservedNow, free: freeNow < 0 ? 0 : freeNow, pct });
 
-        // No-show count (today)
-        const { count: noShowCount } = await supabase
-          .from('seat_reservations')
-          .select('*', { count: 'exact', head: true })
-          .eq('reservation_date', today)
-          .eq('status', 'no_show');
-          
-        setStats({
-          totalBooks: booksCount || 0,
-          activeHolds: activeHolds || 0,
-          pendingPickup: reservedNow,
-          unattendedSeats: noShowCount || 0,
-          loading: false
-        });
-      } catch (e) {
-        console.error('Error fetching dashboard stats', e);
-        setStats(s => ({ ...s, loading: false }));
-      }
+      // No-show count (today)
+      const { count: noShowCount } = await supabase
+        .from('seat_reservations')
+        .select('*', { count: 'exact', head: true })
+        .eq('reservation_date', today)
+        .eq('status', 'no_show');
+        
+      setStats({
+        totalBooks: booksCount || 0,
+        activeHolds: activeHolds || 0,
+        pendingPickup: reservedNow,
+        unattendedSeats: noShowCount || 0,
+        loading: false
+      });
+    } catch (e) {
+      console.error('Error fetching dashboard stats', e);
+      setStats(s => ({ ...s, loading: false }));
     }
-    
-    fetchStats();
-    
-    // Optional real-time refresh could be added here
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchStats();
+    }, [fetchStats])
+  );
+
+  useEffect(() => {
+    fetchStats();
+
+    const channel = supabase
+      .channel(uniqueChannelName('admin_dashboard'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'seat_reservations' }, () => {
+        fetchStats();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, () => {
+        fetchStats();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchStats]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -403,4 +423,4 @@ const styles = StyleSheet.create({
   feedDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
   feedItemText: { flex: 1, fontSize: 13, color: colors.text },
   feedTimeText: { fontSize: 11, color: colors.textMuted, marginLeft: 8 },
-});
+});

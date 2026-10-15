@@ -47,7 +47,7 @@ export default function StaffLoginScreen({ navigation }) {
       await signInStaff(staffId, password);
       navigation.reset({ index: 0, routes: [{ name: 'AdminDashboard' }] });
     } catch (e) {
-      setError('Invalid staff ID or password.');
+      setError(e?.message || 'Invalid staff ID or password.');
       runShake();
     } finally {
       setLoading(false);
