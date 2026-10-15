@@ -13,6 +13,7 @@ import SignUpScreen from '../screens/auth/SignUpScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import ResetPasswordScreen from '../screens/auth/ResetPasswordScreen';
 import StaffLoginScreen from '../screens/auth/StaffLoginScreen';
+import TermsScreen from '../screens/auth/TermsScreen';
 
 import BookDetailsScreen from '../screens/book/BookDetailsScreen';
 import ReserveBookScreen from '../screens/book/ReserveBookScreen';
@@ -54,6 +55,7 @@ export default function AppNavigator() {
         <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ title: 'Reset Password' }} />
         <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} options={{ title: 'Reset Password' }} />
         <Stack.Screen name="StaffLogin" component={StaffLoginScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="TermsAndConditions" component={TermsScreen} options={{ headerShown: false }} />
 
         {/* Route names "Home" and "AdminDashboard" are kept so Login /
             SignUp / Welcome / ResetPassword need no changes. */}
