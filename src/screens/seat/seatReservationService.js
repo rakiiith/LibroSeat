@@ -1,4 +1,5 @@
 import { supabase } from '../../supabase/supabaseConfig';
+import { uniqueChannelName } from '../../supabase/realtimeUtil';
 
 export { TIME_SLOTS } from '../../services/seatReservationService';
 
@@ -58,6 +59,20 @@ export async function createSeatReservation({ seatId, bookingDate, startTime, en
     throw new Error('This seat is already reserved for an overlapping time. Choose another seat or time.');
   }
 
+  // Ensure user profile exists in public.profiles to satisfy foreign key
+  try {
+    const { data: p } = await supabase.from('profiles').select('id').eq('id', user.id).maybeSingle();
+    if (!p) {
+      await supabase.from('profiles').insert({
+        id: user.id,
+        full_name: user.user_metadata?.full_name || 'Student User',
+        student_id: user.user_metadata?.student_id || 'STU-' + user.id.slice(0, 6),
+        email: user.email,
+        role: 'student'
+      });
+    }
+  } catch (_) {}
+
   const { data, error } = await supabase
     .from('seat_reservations')
     .insert({
@@ -108,9 +123,23 @@ export async function cancelSeatReservation(reservationId, userId) {
   return data;
 }
 
+export async function checkInSeatReservation(reservationId, userId) {
+  const { data, error } = await supabase
+    .from('seat_reservations')
+    .update({ status: 'checked_in' })
+    .eq('id', reservationId)
+    .eq('student_id', userId)
+    .in('status', ['reserved', 'confirmed'])
+    .select('id, status')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('This reservation is no longer eligible for check-in. Refresh and try again.');
+  return data;
+}
+
 export function subscribeToSeatReservations(onChange, userId) {
   let channel = supabase
-    .channel(`seat-reservations-${userId}`)
+    .channel(uniqueChannelName(`seat-reservations-${userId}`))
     .on('postgres_changes', {
       event: '*',
       schema: 'public',
@@ -127,7 +156,7 @@ export function subscribeToSeatReservations(onChange, userId) {
 
 export function subscribeToSeatAvailability(onChange) {
   const channel = supabase
-    .channel('seat-availability-realtime')
+    .channel(uniqueChannelName('seat-availability'))
     .on('postgres_changes', {
       event: '*',
       schema: 'public',

@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   cancelSeatReservation,
+  checkInSeatReservation,
   fetchMySeatReservations,
   getCurrentUser,
   localDateString,
@@ -54,22 +55,86 @@ function currentTimeString() {
 
 function isUpcoming(item) {
   const status = String(item.status || '').toLowerCase();
-  if (status !== 'confirmed' && status !== 'pending') return false;
+  if (status !== 'confirmed' && status !== 'pending' && status !== 'reserved' && status !== 'checked_in') return false;
   const today = dateKey();
-  if (item.booking_date > today) return true;
-  return item.booking_date === today && displayTime(item.end_time) >= currentTimeString();
+  const resDate = item.reservation_date || item.booking_date;
+  if (resDate > today) return true;
+  return resDate === today && displayTime(item.end_time) >= currentTimeString();
 }
 
 function canCancel(item) {
-  return String(item.status || '').toLowerCase() === 'confirmed' && (
-    item.booking_date > dateKey() ||
-    (item.booking_date === dateKey() && displayTime(item.start_time) > currentTimeString())
+  const status = String(item.status || '').toLowerCase();
+  const resDate = item.reservation_date || item.booking_date;
+  return (status === 'confirmed' || status === 'reserved') && (
+    resDate > dateKey() ||
+    (resDate === dateKey() && displayTime(item.start_time) > currentTimeString())
   );
+}
+
+function getCheckInInfo(item) {
+  const status = String(item.status || '').toLowerCase();
+  if (status === 'checked_in') {
+    return { canCheckIn: false, isCheckedIn: true, message: 'Checked In · Enjoy your study session' };
+  }
+  if (status === 'cancelled') {
+    return { canCheckIn: false, isCancelled: true, message: 'Cancelled pass' };
+  }
+  if (status === 'no_show') {
+    return { canCheckIn: false, isNoShow: true, message: 'Check-in window passed' };
+  }
+  if (status !== 'reserved' && status !== 'confirmed') {
+    return { canCheckIn: false, message: '' };
+  }
+
+  const resDate = item.reservation_date || item.booking_date;
+  const sTime = item.start_time ? (item.start_time.length === 5 ? `${item.start_time}:00` : item.start_time) : '00:00:00';
+  const eTime = item.end_time ? (item.end_time.length === 5 ? `${item.end_time}:00` : item.end_time) : '23:59:59';
+  const start = new Date(`${resDate}T${sTime}`);
+  const end = new Date(`${resDate}T${eTime}`);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return { canCheckIn: false, message: '' };
+  }
+
+  const now = new Date();
+  const earlyWindow = new Date(start.getTime() - 15 * 60000);
+
+  if (now < earlyWindow) {
+    const earlyMin = String(earlyWindow.getMinutes()).padStart(2, '0');
+    let earlyHours = earlyWindow.getHours();
+    const ampm = earlyHours >= 12 ? 'PM' : 'AM';
+    earlyHours = earlyHours % 12 || 12;
+    const openTimeStr = `${String(earlyHours).padStart(2, '0')}:${earlyMin} ${ampm}`;
+    return {
+      canCheckIn: false,
+      isPendingWindow: true,
+      message: `Check-in opens 15m prior (at ${openTimeStr})`,
+    };
+  }
+
+  if (now > end) {
+    return {
+      canCheckIn: false,
+      isExpired: true,
+      message: 'Reservation shift has ended',
+    };
+  }
+
+  return {
+    canCheckIn: true,
+    message: 'Check-in is open now!',
+  };
+}
+
+function canCheckIn(item) {
+  return getCheckInInfo(item).canCheckIn;
 }
 
 function statusTone(status) {
   switch (String(status || '').toLowerCase()) {
-    case 'confirmed': return { text: C.emerald, bg: C.greenBg, icon: 'checkmark-circle' };
+    case 'checked_in': return { text: C.emerald, bg: C.greenBg, icon: 'checkmark-circle' };
+    case 'confirmed':
+    case 'reserved': return { text: C.teal, bg: C.pale, icon: 'bookmark' };
     case 'cancelled': return { text: C.rose, bg: C.roseBg, icon: 'close-circle' };
     default: return { text: C.amber, bg: C.amberBg, icon: 'time' };
   }
@@ -140,21 +205,54 @@ export default function MyReservationsScreen({ navigation }) {
     return items.filter(item => {
       const active = isUpcoming(item);
       const matchesTab = tab === 'Upcoming' ? active : !active;
-      const seat = item.library_seats?.seat_number ?? item.seat_id ?? '';
-      const room = item.library_seats?.reading_rooms?.name ?? '';
-      const haystack = `${seat} ${room} ${item.booking_date} ${item.status}`.toLowerCase();
+      const seat = item.seats?.seat_number ?? item.seat_id ?? '';
+      const room = item.seats?.zone ?? 'Reading Room A';
+      const resDate = item.reservation_date || item.booking_date || '';
+      const haystack = `${seat} ${room} ${resDate} ${item.status}`.toLowerCase();
       return matchesTab && (!query || haystack.includes(query));
     }).sort((left, right) => {
-      const a = `${left.booking_date} ${displayTime(left.start_time)}`;
-      const b = `${right.booking_date} ${displayTime(right.start_time)}`;
+      const leftDate = left.reservation_date || left.booking_date || '';
+      const rightDate = right.reservation_date || right.booking_date || '';
+      const a = `${leftDate} ${displayTime(left.start_time)}`;
+      const b = `${rightDate} ${displayTime(right.start_time)}`;
       return tab === 'Upcoming' ? a.localeCompare(b) : b.localeCompare(a);
     });
   }, [items, search, tab]);
 
+  const handleCheckIn = (item) => {
+    const seatNum = item.seats?.seat_number ?? item.seat_id;
+    Alert.alert(
+      'Check in to seat?',
+      `Confirm your arrival at Carrel ${seatNum}.`,
+      [
+        { text: 'Not yet', style: 'cancel' },
+        {
+          text: 'Check in now',
+          onPress: async () => {
+            setBusyId(item.id);
+            try {
+              const user = await getCurrentUser();
+              await checkInSeatReservation(item.id, user.id);
+              setSelected(null);
+              await load(user.id, true);
+              Alert.alert('Check-in confirmed', 'Your seat is now active. Enjoy your study session!');
+            } catch (e) {
+              Alert.alert('Check-in failed', e.message || 'Please try again.');
+            } finally {
+              setBusyId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const cancel = (item) => {
+    const seatNum = item.seats?.seat_number ?? item.seat_id;
+    const resDate = item.reservation_date || item.booking_date;
     Alert.alert(
       'Cancel reservation?',
-      `Seat ${item.library_seats?.seat_number ?? item.seat_id} · ${displayDate(item.booking_date)}`,
+      `Seat ${seatNum} · ${displayDate(resDate)}`,
       [
         { text: 'Keep booking', style: 'cancel' },
         {
@@ -179,10 +277,12 @@ export default function MyReservationsScreen({ navigation }) {
   };
 
   const renderItem = ({ item }) => {
-    const seat = item.library_seats?.seat_number ?? item.seat_id;
-    const room = item.library_seats?.reading_rooms?.name ?? 'Reading room';
+    const seat = item.seats?.seat_number ?? item.seat_id;
+    const room = item.seats?.zone ?? 'Quiet Study';
     const status = statusTone(item.status);
     const active = isUpcoming(item);
+    const resDate = item.reservation_date || item.booking_date;
+    const checkInfo = getCheckInInfo(item);
     return (
       <Pressable onPress={() => setSelected(item)} style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
         <View style={styles.cardTop}>
@@ -195,7 +295,6 @@ export default function MyReservationsScreen({ navigation }) {
             <Text style={styles.metaLine}>
               <Ionicons name="time-outline" size={12} color={C.amber} />{' '}
               {displayTime(item.start_time)} – {displayTime(item.end_time)}
-              {item.library_seats?.seat_type ? `  ·  ${item.library_seats.seat_type}` : ''}
             </Text>
           </View>
           <View style={[styles.statusPill, { backgroundColor: status.bg }]}>
@@ -207,7 +306,7 @@ export default function MyReservationsScreen({ navigation }) {
         <View style={styles.dateStrip}>
           <View style={styles.dateTextWrap}>
             <Ionicons name="calendar-outline" size={15} color={C.amber} />
-            <Text style={styles.dateText}>{displayDate(item.booking_date)}</Text>
+            <Text style={styles.dateText}>{displayDate(resDate)}</Text>
           </View>
           {active ? (
             <View style={styles.activeLabel}><View style={styles.liveDot} /><Text style={styles.activeLabelText}>ACTIVE PASS</Text></View>
@@ -219,8 +318,25 @@ export default function MyReservationsScreen({ navigation }) {
         <View style={styles.actions}>
           <Pressable onPress={() => setSelected(item)} style={styles.passButton}>
             <Ionicons name="ticket-outline" size={16} color={C.amber} />
-            <Text style={styles.passButtonText}>Reservation details</Text>
+            <Text style={styles.passButtonText}>Details</Text>
           </Pressable>
+          {checkInfo.canCheckIn ? (
+            <Pressable disabled={busyId === item.id} onPress={() => handleCheckIn(item)} style={styles.checkInButton}>
+              {busyId === item.id ? (
+                <ActivityIndicator size="small" color={C.white} />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-done" size={15} color={C.white} />
+                  <Text style={styles.checkInButtonText}>Check In</Text>
+                </>
+              )}
+            </Pressable>
+          ) : checkInfo.isPendingWindow ? (
+            <View style={styles.pendingWindowBadge}>
+              <Ionicons name="time-outline" size={12} color={C.amber} />
+              <Text style={styles.pendingWindowText}>{checkInfo.message}</Text>
+            </View>
+          ) : null}
           {canCancel(item) && (
             <Pressable disabled={busyId === item.id} onPress={() => cancel(item)} style={styles.cancelButton}>
               {busyId === item.id ? <ActivityIndicator size="small" color={C.rose} /> : <>
@@ -233,6 +349,8 @@ export default function MyReservationsScreen({ navigation }) {
       </Pressable>
     );
   };
+
+  const selectedCheckInfo = selected ? getCheckInInfo(selected) : null;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -298,14 +416,33 @@ export default function MyReservationsScreen({ navigation }) {
           </View>
           <View style={styles.detailHero}>
             <Text style={styles.detailLabel}>ASSIGNED SEAT</Text>
-            <Text style={styles.detailSeat}>Seat {selected.library_seats?.seat_number ?? selected.seat_id}</Text>
-            <Text style={styles.detailRoom}>{selected.library_seats?.reading_rooms?.name ?? 'Reading room'}{selected.library_seats?.reading_rooms?.floor ? ` · Floor ${selected.library_seats.reading_rooms.floor}` : ''}</Text>
+            <Text style={styles.detailSeat}>Seat {selected.seats?.seat_number ?? selected.seat_id}</Text>
+            <Text style={styles.detailRoom}>{selected.seats?.zone ?? 'Reading Room A'}</Text>
           </View>
           <View style={styles.detailGrid}>
-            <View style={styles.detailCell}><Text style={styles.detailLabel}>DATE</Text><Text style={styles.detailValue}>{displayDate(selected.booking_date)}</Text></View>
+            <View style={styles.detailCell}><Text style={styles.detailLabel}>DATE</Text><Text style={styles.detailValue}>{displayDate(selected.reservation_date || selected.booking_date)}</Text></View>
             <View style={styles.detailCell}><Text style={styles.detailLabel}>TIME SLOT</Text><Text style={styles.detailValue}>{displayTime(selected.start_time)} – {displayTime(selected.end_time)}</Text></View>
           </View>
           <View style={styles.modalStatusRow}><Text style={styles.detailLabel}>BOOKING STATUS</Text><View style={[styles.statusPill, { backgroundColor: statusTone(selected.status).bg }]}><Text style={[styles.statusText, { color: statusTone(selected.status).text }]}>{selected.status || 'Pending'}</Text></View></View>
+          {selectedCheckInfo?.canCheckIn ? (
+            <Pressable
+              disabled={busyId === selected.id}
+              onPress={() => {
+                const item = selected;
+                setSelected(null);
+                handleCheckIn(item);
+              }}
+              style={styles.modalCheckIn}
+            >
+              <Ionicons name="checkmark-done" size={16} color={C.white} />
+              <Text style={styles.modalCheckInText}>Check In Now</Text>
+            </Pressable>
+          ) : selectedCheckInfo?.isPendingWindow ? (
+            <View style={styles.modalPendingWindow}>
+              <Ionicons name="time-outline" size={15} color={C.amber} />
+              <Text style={styles.modalPendingWindowText}>{selectedCheckInfo.message}</Text>
+            </View>
+          ) : null}
           {canCancel(selected) && <Pressable onPress={() => cancel(selected)} style={styles.modalCancel}><Text style={styles.modalCancelText}>Cancel reservation</Text></Pressable>}
           <Pressable onPress={() => setSelected(null)} style={styles.doneButton}><Text style={styles.doneText}>Done</Text></Pressable>
         </View>
@@ -353,6 +490,12 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', gap: 8, marginTop: 12, paddingTop: 11, borderTopWidth: 1, borderTopColor: C.border },
   passButton: { flex: 1, minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 12, borderWidth: 1, borderColor: '#CFE5E3', backgroundColor: '#F7FBFA' },
   passButtonText: { color: C.dark, fontSize: 10, fontWeight: '700' },
+  checkInButton: { minWidth: 92, minHeight: 38, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: 12, backgroundColor: C.emerald },
+  checkInButtonText: { color: C.white, fontSize: 10, fontWeight: '800' },
+  pendingWindowBadge: { flex: 1, minHeight: 38, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: 12, backgroundColor: C.amberBg, borderWidth: 1, borderColor: '#FCE0A6' },
+  pendingWindowText: { color: C.amber, fontSize: 10, fontWeight: '700' },
+  modalPendingWindow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 12, paddingHorizontal: 12, borderRadius: 13, backgroundColor: C.amberBg, borderWidth: 1, borderColor: '#FCE0A6', marginBottom: 9 },
+  modalPendingWindowText: { color: C.amber, fontSize: 11, fontWeight: '700' },
   cancelButton: { minWidth: 86, minHeight: 38, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 12, borderWidth: 1, borderColor: '#F0C7C9', backgroundColor: '#FFF9F9' },
   cancelText: { color: C.rose, fontSize: 10, fontWeight: '700' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28 },
@@ -379,6 +522,8 @@ const styles = StyleSheet.create({
   detailCell: { flex: 1, padding: 12, borderRadius: 14, backgroundColor: C.bg, borderWidth: 1, borderColor: C.border },
   detailValue: { color: C.text, fontSize: 11, fontWeight: '700', marginTop: 8 },
   modalStatusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16 },
+  modalCheckIn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 13, borderRadius: 13, backgroundColor: C.emerald, marginBottom: 9 },
+  modalCheckInText: { color: C.white, fontSize: 12, fontWeight: '800' },
   modalCancel: { alignItems: 'center', paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: '#F0C7C9', backgroundColor: '#FFF9F9', marginBottom: 9 },
   modalCancelText: { color: C.rose, fontSize: 12, fontWeight: '800' },
   doneButton: { alignItems: 'center', paddingVertical: 13, borderRadius: 13, backgroundColor: C.teal },

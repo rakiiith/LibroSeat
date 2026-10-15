@@ -13,7 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { createSeatReservation } from './seatReservationService';
+import { createSeatReservation, TIME_SLOTS } from './seatReservationService';
 
 const C = {
   bg: '#F4F7F8', white: '#FFFFFF', teal: '#0F8B8D',
@@ -31,8 +31,9 @@ function dateString(date) {
 export default function SeatConfirmationScreen({ route, navigation }) {
   const seat = route?.params?.seat;
   const [date, setDate] = useState(dateString(new Date()));
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('10:00');
+  const [selectedSlot, setSelectedSlot] = useState(TIME_SLOTS[3] || TIME_SLOTS[0]);
+  const [startTime, setStartTime] = useState(TIME_SLOTS[3]?.start?.substring(0, 5) || '14:00');
+  const [endTime, setEndTime] = useState(TIME_SLOTS[3]?.end?.substring(0, 5) || '16:00');
   const [saving, setSaving] = useState(false);
   const [confirmed, setConfirmed] = useState(null);
   const savingRef = useRef(false);
@@ -47,6 +48,12 @@ export default function SeatConfirmationScreen({ route, navigation }) {
       tension: 100,
     }).start();
   }, [confirmed, successScale]);
+
+  const handleSelectSlot = (slot) => {
+    setSelectedSlot(slot);
+    setStartTime(slot.start.substring(0, 5));
+    setEndTime(slot.end.substring(0, 5));
+  };
 
   const submit = async () => {
     if (savingRef.current) return;
@@ -81,8 +88,8 @@ export default function SeatConfirmationScreen({ route, navigation }) {
     if (date === dateString(new Date())) {
       const now = new Date();
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      if (startTime <= currentTime) {
-        Alert.alert('Invalid time', 'Choose a start time later than the current time.');
+      if (endTime <= currentTime) {
+        Alert.alert('Shift passed', 'This time slot has already passed for today. Please select an upcoming or future shift.');
         return;
       }
     }
@@ -153,10 +160,7 @@ export default function SeatConfirmationScreen({ route, navigation }) {
           <Text style={styles.eyebrow}>YOUR SELECTED SEAT</Text>
           <Text style={styles.seatNumber}>{seat.seat_number}</Text>
           <Text style={styles.room}>
-            {seat.reading_rooms?.name ?? 'Reading room'}
-          </Text>
-          <Text style={styles.floor}>
-            Floor {seat.reading_rooms?.floor ?? '—'} · {seat.seat_type || 'Standard'}
+            {seat.zone ?? 'Reading Room'}
           </Text>
         </View>
 
@@ -170,13 +174,31 @@ export default function SeatConfirmationScreen({ route, navigation }) {
         />
         <Text style={styles.help}>Format: YYYY-MM-DD</Text>
 
+        <Text style={styles.label}>Select Shift / Time Slot</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.slotsScroll}>
+          {TIME_SLOTS.map((slot) => {
+            const active = selectedSlot?.id === slot.id;
+            return (
+              <Pressable
+                key={slot.id}
+                onPress={() => handleSelectSlot(slot)}
+                style={[styles.slotPill, active && styles.slotPillActive]}
+              >
+                <Text style={[styles.slotPillText, active && styles.slotPillTextActive]}>
+                  {slot.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
         <View style={styles.timeRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.label}>Start time</Text>
             <TextInput
               value={startTime}
               onChangeText={setStartTime}
-              placeholder="09:00"
+              placeholder="14:00"
               style={styles.input}
               keyboardType="numbers-and-punctuation"
             />
@@ -186,13 +208,13 @@ export default function SeatConfirmationScreen({ route, navigation }) {
             <TextInput
               value={endTime}
               onChangeText={setEndTime}
-              placeholder="10:00"
+              placeholder="16:00"
               style={styles.input}
               keyboardType="numbers-and-punctuation"
             />
           </View>
         </View>
-        <Text style={styles.help}>Use 24-hour time, for example 14:30.</Text>
+        <Text style={styles.help}>Shift times in 24-hour format (e.g. 14:00 - 16:00 for 02:00 - 04:00 PM).</Text>
 
         <View style={styles.notice}>
           <Text style={styles.noticeTitle}>Before you confirm</Text>
@@ -254,6 +276,11 @@ const styles = StyleSheet.create({
     color: C.text, fontSize: 15,
   },
   help: { color: C.muted, fontSize: 11, marginTop: 7, marginBottom: 19 },
+  slotsScroll: { flexDirection: 'row', gap: 8, paddingVertical: 6, marginBottom: 16 },
+  slotPill: { paddingHorizontal: 13, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: C.border, backgroundColor: C.white },
+  slotPillActive: { backgroundColor: C.teal, borderColor: C.teal },
+  slotPillText: { fontSize: 12, fontWeight: '700', color: C.muted },
+  slotPillTextActive: { color: C.white },
   timeRow: { flexDirection: 'row', gap: 12 },
   notice: { backgroundColor: '#E4F4F1', borderRadius: 15, padding: 15, marginTop: 6, marginBottom: 23 },
   noticeTitle: { color: C.dark, fontWeight: '800', fontSize: 13 },

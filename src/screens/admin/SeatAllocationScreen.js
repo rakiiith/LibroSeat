@@ -1,72 +1,145 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Platform, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { colors, spacing, radius } from '../../theme/theme';
 import { fetchAdminSeatData, blockSeat, updateSeatReservationStatus, TIME_SLOTS } from '../../services/seatReservationService';
 import { supabase } from '../../supabase/supabaseClient';
+import { uniqueChannelName } from '../../supabase/realtimeUtil';
 
-export default function SeatAllocationScreen() {
+function formatDateKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function formatDisplayDate(dateStr) {
+  const parts = dateStr.split('-');
+  const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  const todayStr = formatDateKey(new Date());
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = formatDateKey(tomorrow);
+
+  if (dateStr === todayStr) {
+    return `Today (${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+  }
+  if (dateStr === tomorrowStr) {
+    return `Tomorrow (${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+  }
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+export default function SeatAllocationScreen({ route }) {
   const [seats, setSeats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedSeat, setSelectedSeat] = useState(null);
   
-  const today = new Date().toISOString().split('T')[0];
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [selectedSlot, setSelectedSlot] = useState(TIME_SLOTS[0]);
+  const initialDate = route?.params?.date || formatDateKey(new Date());
+  const [selectedDate, setSelectedDate] = useState(initialDate);
+  const [selectedSlot, setSelectedSlot] = useState(() => {
+    if (route?.params?.slotId) {
+      return TIME_SLOTS.find(s => s.id === route.params.slotId) || TIME_SLOTS[0];
+    }
+    return TIME_SLOTS[3] || TIME_SLOTS[0]; // Default to 02:00 - 04:00 PM if available
+  });
+
+  const quickDates = React.useMemo(() => {
+    const list = [];
+    const base = new Date();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(base);
+      d.setDate(base.getDate() + i);
+      const key = formatDateKey(d);
+      let label = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      if (i === 0) label = `Today (${d.getDate()} ${d.toLocaleDateString(undefined, { month: 'short' })})`;
+      else if (i === 1) label = `Tomorrow (${d.getDate()} ${d.toLocaleDateString(undefined, { month: 'short' })})`;
+      else label = `${d.toLocaleDateString(undefined, { weekday: 'short' })}, ${d.getDate()} ${d.toLocaleDateString(undefined, { month: 'short' })}`;
+      list.push({ key, label });
+    }
+    return list;
+  }, []);
+
+  const changeDateBy = (offset) => {
+    const parts = selectedDate.split('-');
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    d.setDate(d.getDate() + offset);
+    setSelectedDate(formatDateKey(d));
+  };
 
   useEffect(() => {
-    loadSeats();
-    
-    // Subscribe to realtime updates on seat_reservations
-    const channel = supabase
-      .channel('admin:seat_reservations')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'seat_reservations' }, payload => {
-        loadSeats();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'seats' }, payload => {
-        loadSeats();
-      })
-      .subscribe();
+    if (route?.params?.date) {
+      setSelectedDate(route.params.date);
+    }
+    if (route?.params?.slotId) {
+      const match = TIME_SLOTS.find(s => s.id === route.params.slotId);
+      if (match) setSelectedSlot(match);
+    }
+  }, [route?.params?.date, route?.params?.slotId]);
 
-    return () => { supabase.removeChannel(channel); };
-  }, [selectedDate, selectedSlot]);
-
-  async function loadSeats() {
-    setLoading(true);
+  const loadSeats = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setLoading(true);
     try {
       const data = await fetchAdminSeatData(selectedDate, selectedSlot);
       setSeats(data);
-      if (selectedSeat) {
-        const updated = data.find(s => s.id === selectedSeat.id);
-        if (updated) setSelectedSeat(updated);
-      }
+      setSelectedSeat((current) => {
+        if (!current) return null;
+        return data.find(s => s.id === current.id) ?? current;
+      });
     } catch (e) {
       console.warn(e);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  }
+  }, [selectedDate, selectedSlot]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadSeats(false);
+    }, [loadSeats])
+  );
+
+  useEffect(() => {
+    loadSeats(true);
+    
+    // Subscribe to realtime updates on seat_reservations
+    const channel = supabase
+      .channel(uniqueChannelName(`admin_seat_${selectedDate}_${selectedSlot.id}`))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'seat_reservations' }, () => {
+        loadSeats(false);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'seats' }, () => {
+        loadSeats(false);
+      })
+      .subscribe();
+
+    const interval = setInterval(() => {
+      loadSeats(false);
+    }, 5000);
+
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
+  }, [selectedDate, selectedSlot]);
 
   async function handleBlock(seat) {
-    setLoading(true);
     try {
       await blockSeat(seat.id, !seat.is_blocked);
-      await loadSeats();
+      await loadSeats(false);
     } catch (e) {
       console.warn(e);
-      setLoading(false);
     }
   }
 
   async function handleCancelRes(resId) {
-    setLoading(true);
     try {
       await updateSeatReservationStatus(resId, 'cancelled');
-      await loadSeats();
+      await loadSeats(false);
     } catch (e) {
       console.warn(e);
-      setLoading(false);
     }
   }
 
@@ -104,6 +177,9 @@ export default function SeatAllocationScreen() {
           </View>
         </View>
         <View style={styles.headerIcons}>
+          <TouchableOpacity onPress={() => loadSeats()} style={styles.iconMargin}>
+            <Ionicons name="refresh-outline" size={20} color={colors.primary} />
+          </TouchableOpacity>
           <Ionicons name="search" size={20} color={colors.text} style={styles.iconMargin} />
           <View style={styles.profileAvatar}>
             <Ionicons name="person" size={14} color={colors.white} />
@@ -111,11 +187,43 @@ export default function SeatAllocationScreen() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={loadSeats} colors={[colors.primary]} />}
+      >
         
         {/* Title */}
         <Text style={styles.pageTitle}>Seat Allocation Settings</Text>
         <Text style={styles.pageSubtitle}>Real-time carrel occupancy rules and zone layout</Text>
+
+        {/* Date Selector */}
+        <View style={styles.dateSelectorContainer}>
+          <View style={styles.dateHeaderRow}>
+            <TouchableOpacity onPress={() => changeDateBy(-1)} style={styles.dateNavBtn}>
+              <Ionicons name="chevron-back" size={16} color={colors.primary} />
+            </TouchableOpacity>
+            <View style={styles.dateDisplayWrap}>
+              <Ionicons name="calendar" size={16} color={colors.primary} style={{marginRight: 6}} />
+              <Text style={styles.dateDisplayText}>{formatDisplayDate(selectedDate)}</Text>
+            </View>
+            <TouchableOpacity onPress={() => changeDateBy(1)} style={styles.dateNavBtn}>
+              <Ionicons name="chevron-forward" size={16} color={colors.primary} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickDateScroll}>
+            {quickDates.map(qd => (
+              <TouchableOpacity
+                key={qd.key}
+                style={[styles.dateChip, selectedDate === qd.key && styles.dateChipActive]}
+                onPress={() => setSelectedDate(qd.key)}
+              >
+                <Text style={[styles.dateChipText, selectedDate === qd.key && styles.dateChipTextActive]}>{qd.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
 
         {/* Slot Picker */}
         <View style={{marginBottom: spacing.lg}}>
@@ -227,12 +335,26 @@ export default function SeatAllocationScreen() {
                 </Text>
               </View>
               
-              <View style={[styles.detailStatusBox, { backgroundColor: selectedSeat.is_blocked ? '#F3F4F6' : (!selectedSeat.reservation || selectedSeat.reservation.status === 'cancelled' ? '#EFFFFE' : '#FCE7F3') }]}>
-                <View style={[styles.detailStatusDot, { backgroundColor: selectedSeat.is_blocked ? '#9CA3AF' : (!selectedSeat.reservation || selectedSeat.reservation.status === 'cancelled' ? '#009688' : '#E11D48') }]} />
-                <Text style={[styles.detailStatusText, { color: selectedSeat.is_blocked ? '#9CA3AF' : (!selectedSeat.reservation || selectedSeat.reservation.status === 'cancelled' ? '#009688' : '#E11D48') }]}>
-                  {selectedSeat.is_blocked ? 'Blocked' : (!selectedSeat.reservation || selectedSeat.reservation.status === 'cancelled' ? 'Free' : selectedSeat.reservation.status.toUpperCase())}
-                </Text>
-              </View>
+              {(() => {
+                const getDetailStatus = () => {
+                  if (selectedSeat.is_blocked) return { bg: '#F3F4F6', color: '#9CA3AF', label: 'Blocked' };
+                  const res = selectedSeat.reservation;
+                  if (!res || res.status === 'cancelled') return { bg: '#EFFFFE', color: '#009688', label: 'Free' };
+                  if (res.status === 'checked_in') return { bg: '#E6F4EA', color: '#1E403F', label: 'Occupied' };
+                  if (res.status === 'reserved') return { bg: '#E0F2FE', color: '#0284C7', label: 'Reserved' };
+                  if (res.status === 'no_show') return { bg: '#FCE7F3', color: '#E11D48', label: 'No-Show' };
+                  return { bg: '#F3F4F6', color: '#6B7280', label: res.status.toUpperCase() };
+                };
+                const st = getDetailStatus();
+                return (
+                  <View style={[styles.detailStatusBox, { backgroundColor: st.bg }]}>
+                    <View style={[styles.detailStatusDot, { backgroundColor: st.color }]} />
+                    <Text style={[styles.detailStatusText, { color: st.color }]}>
+                      {st.label}
+                    </Text>
+                  </View>
+                );
+              })()}
             </View>
 
             <View style={styles.detailActionRow}>
@@ -299,7 +421,61 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl, paddingTop: spacing.md },
 
   pageTitle: { fontSize: 22, fontWeight: '700', color: '#111827', marginBottom: 4 },
-  pageSubtitle: { fontSize: 13, color: '#6B7280', marginBottom: spacing.lg },
+  dateSelectorContainer: {
+    marginBottom: spacing.md,
+    backgroundColor: colors.white,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  dateHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  dateNavBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateDisplayWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dateDisplayText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  quickDateScroll: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  dateChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  dateChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  dateChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  dateChipTextActive: {
+    color: colors.white,
+  },
 
   slotChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, backgroundColor: '#E5E7EB', borderWidth: 1, borderColor: 'transparent' },
   slotChipActive: { backgroundColor: '#E0F2FE', borderColor: colors.primary },

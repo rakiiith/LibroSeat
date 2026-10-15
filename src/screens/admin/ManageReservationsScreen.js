@@ -1,16 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, ScrollView, Platform } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, ScrollView, Platform, RefreshControl, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { colors, spacing, radius, typography } from '../../theme/theme';
 import { getRichReservations, releaseReservation } from '../../services/reservationService';
-import { ActivityIndicator, Alert } from 'react-native';
+import { TIME_SLOTS } from '../../services/seatReservationService';
+import { supabase } from '../../supabase/supabaseClient';
+import { uniqueChannelName } from '../../supabase/realtimeUtil';
 
-export default function ManageReservationsScreen() {
+export default function ManageReservationsScreen({ navigation }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const seatCount = reservations.filter(r => r.type === 'seat' || r.type === 'seat_adv').length;
   const bookCount = reservations.filter(r => r.type === 'book').length;
@@ -40,32 +44,57 @@ export default function ManageReservationsScreen() {
     return true;
   });
 
-
-
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  async function fetchData() {
-    setLoading(true);
+  const fetchData = useCallback(async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     try {
       const data = await getRichReservations();
       setReservations(data);
     } catch (e) {
       console.warn(e);
-      Alert.alert("Error", "Failed to load reservations");
+      if (showSpinner) Alert.alert("Error", "Failed to load reservations");
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
+      setRefreshing(false);
     }
-  }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData(false);
+    }, [fetchData])
+  );
+
+  useEffect(() => {
+    fetchData(true);
+
+    const channel = supabase
+      .channel(uniqueChannelName('manage_reservations'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'seat_reservations' }, () => {
+        fetchData(false);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, () => {
+        fetchData(false);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchData]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchData(false);
+  }, [fetchData]);
 
   async function handleRelease(res) {
     try {
       setLoading(true);
       await releaseReservation(res.id, res.type, res.ref_id);
-      await fetchData();
+      await fetchData(false);
     } catch (e) {
       Alert.alert("Error", "Failed to release reservation");
+    } finally {
       setLoading(false);
     }
   }
@@ -83,7 +112,15 @@ export default function ManageReservationsScreen() {
     let statusBg = '#E5E7EB';
     let statusColor = '#374151';
     
-    if (item.status === 'confirmed' || item.status === 'active' || item.status === 'reserved' || item.status === 'checked_in') {
+    if (item.status === 'checked_in') {
+      statusLabel = 'Checked In';
+      avatarBg = '#D1FAE5'; avatarText = '#065F46';
+      statusBg = '#D1FAE5'; statusColor = '#059669';
+    } else if (item.status === 'reserved') {
+      statusLabel = 'Reserved';
+      avatarBg = '#E0F2FE'; avatarText = '#0284C7';
+      statusBg = '#E0F2FE'; statusColor = '#0284C7';
+    } else if (item.status === 'confirmed' || item.status === 'active') {
       statusLabel = 'Active';
       avatarBg = '#D1FAE5'; avatarText = '#065F46';
       statusBg = '#D1FAE5'; statusColor = '#059669';
@@ -98,6 +135,7 @@ export default function ManageReservationsScreen() {
     } else if (item.status === 'cancelled') {
       avatarBg = '#F3F4F6'; avatarText = '#9CA3AF';
       statusBg = '#F3F4F6'; statusColor = '#9CA3AF';
+      statusLabel = 'Cancelled';
     }
 
     const resourceName = (item.type === 'seat' || item.type === 'seat_adv') ? `Carrel ${item.item?.seat_number || '?'}` : (item.item?.title || 'Unknown Book');
@@ -135,7 +173,20 @@ export default function ManageReservationsScreen() {
           </View>
         </View>
 
-        <View style={styles.resourceBox}>
+        <TouchableOpacity 
+          style={styles.resourceBox}
+          activeOpacity={0.8}
+          onPress={() => {
+            if ((item.type === 'seat' || item.type === 'seat_adv') && navigation) {
+              const sTime = item.start_time ? String(item.start_time).substring(0, 5) : '14:00';
+              const slot = TIME_SLOTS.find(s => s.start.startsWith(sTime)) || TIME_SLOTS[0];
+              navigation.navigate('Seats', {
+                date: item.booking_date,
+                slotId: slot.id,
+              });
+            }
+          }}
+        >
           <View style={styles.resourceBoxLeft}>
             <View style={styles.resourceRow}>
               {(item.type === 'seat' || item.type === 'seat_adv') ? (
@@ -157,7 +208,7 @@ export default function ManageReservationsScreen() {
           <View style={styles.resourceBoxRight}>
             <Text style={styles.rightBoxText} numberOfLines={2}>{rightBoxText}</Text>
           </View>
-        </View>
+        </TouchableOpacity>
 
         <View style={styles.actionRow}>
           {(item.type === 'seat' || item.type === 'seat_adv') ? (
@@ -271,10 +322,11 @@ export default function ManageReservationsScreen() {
         <FlatList
           data={filteredData}
           keyExtractor={item => item.id.toString()}
-        renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-      />
+          renderItem={renderItem}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[colors.primary]} tintColor={colors.primary} />}
+        />
       )}
     </SafeAreaView>
   );

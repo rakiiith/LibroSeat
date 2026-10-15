@@ -22,7 +22,7 @@ export async function createReservation(type, refId, userId, dueDate = null) {
 }
 
 export async function releaseReservation(reservationId, type, refId) {
-  if (type === 'seat_adv') {
+  if (type === 'seat_adv' || type === 'seat') {
     const { error } = await supabase.from('seat_reservations').update({ status: 'cancelled' }).eq('id', reservationId);
     if (error) throw error;
     return;
@@ -30,10 +30,6 @@ export async function releaseReservation(reservationId, type, refId) {
 
   const { error } = await supabase.from('reservations').update({ status: 'cancelled' }).eq('id', reservationId);
   if (error) throw error;
-
-  const table = type === 'seat' ? 'seats' : 'books';
-  const { error: updateError } = await supabase.from(table).update({ is_available: true }).eq('id', refId);
-  if (updateError) throw updateError;
 }
 
 export async function getRichReservations() {
