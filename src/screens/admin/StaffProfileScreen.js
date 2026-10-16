@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography } from '../../theme/theme';
 import ProfileView from '../../components/ProfileView';
 import LogoutConfirmModal from '../../components/LogoutConfirmModal';
@@ -18,14 +19,24 @@ export default function StaffProfileScreen({ navigation }) {
       console.warn('Logout failed:', e.message);
     } finally {
       setLogoutVisible(false);
-      navigation.getParent()?.reset({ index: 0, routes: [{ name: 'RoleSelection' }] });
+      const rootNav = navigation.getParent() || navigation;
+      rootNav.reset({ index: 0, routes: [{ name: 'RoleSelection' }] });
     }
   };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Text style={typography.title}>Staff Profile</Text>
+        <TouchableOpacity
+          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('AdminDashboard'))}
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel="Back to Admin Dashboard"
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={[typography.title, { flex: 1 }]}>Staff Profile</Text>
         <View style={styles.staffBadge}>
           <Text style={styles.staffBadgeText}>STAFF</Text>
         </View>
@@ -46,10 +57,10 @@ export default function StaffProfileScreen({ navigation }) {
             onPress: () => navigation.navigate('PersonalInfo'),
           },
           {
-            icon: 'library-outline',
-            title: 'Manage Library',
-            subtitle: 'Reservations and inventory',
-            onPress: () => navigation.navigate('Manage'),
+            icon: 'shield-checkmark-outline',
+            title: 'Admin Dashboard',
+            subtitle: 'Return to portal overview',
+            onPress: () => navigation.navigate('AdminDashboard', { screen: 'AdminHome' }),
           },
           {
             icon: 'settings-outline',
@@ -76,9 +87,14 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+  },
+  backButton: {
+    paddingRight: spacing.xs,
+    cursor: 'pointer',
   },
   staffBadge: {
     backgroundColor: colors.primary + '22',
