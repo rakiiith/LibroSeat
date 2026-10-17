@@ -4,14 +4,12 @@ import {
   Platform, ScrollView, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { requestPasswordReset } from '../../supabase/authService';
 
 const TEAL = '#14919B';
 const RED = '#E53935';
 
 export default function ForgotPasswordScreen({ navigation }) {
-  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -40,11 +38,7 @@ export default function ForgotPasswordScreen({ navigation }) {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#fff' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={{ padding: 24, paddingTop: insets.top + 12 }} keyboardShouldPersistTaps="handled">
-        <Pressable onPress={() => navigation.goBack()} hitSlop={12} style={{ marginBottom: 24 }}>
-          <Ionicons name="arrow-back" size={24} color="#1F2937" />
-        </Pressable>
-
+      <ScrollView contentContainerStyle={{ padding: 24, paddingTop: 24 }} keyboardShouldPersistTaps="handled">
         <View style={s.iconWrap}>
           <Ionicons name="mail-outline" size={34} color={TEAL} />
         </View>
