@@ -4,7 +4,6 @@ import {
   KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as client from '../../supabase/supabaseClient';
 import { useCurrentProfile, refreshProfile } from '../../hooks/useCurrentProfile';
 
@@ -19,7 +18,6 @@ const initialsOf = (name) => {
 };
 
 export default function PersonalInfoScreen({ navigation }) {
-  const insets = useSafeAreaInsets();
   const { profile, user, loading } = useCurrentProfile();
   const [fullName, setFullName] = useState('');
   const [studentId, setStudentId] = useState('');
@@ -74,20 +72,9 @@ export default function PersonalInfoScreen({ navigation }) {
     }
   };
 
-  const header = (
-    <View style={[s.header, { paddingTop: insets.top + 8 }]}>
-      <Pressable onPress={() => navigation.goBack()} hitSlop={12}>
-        <Ionicons name="arrow-back" size={24} color="#1F2937" />
-      </Pressable>
-      <Text style={s.headerTitle}>Personal Information</Text>
-      <View style={{ width: 24 }} />
-    </View>
-  );
-
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#F7FAFB' }}>
-        {header}
+      <View style={s.screen}>
         <ActivityIndicator color={TEAL} style={{ marginTop: 40 }} />
       </View>
     );
@@ -95,24 +82,24 @@ export default function PersonalInfoScreen({ navigation }) {
 
   if (profile?.role === 'staff') {
     return (
-      <View style={{ flex: 1, backgroundColor: '#F7FAFB' }}>
-        {header}
-        <Text style={s.staffMsg}>Profile editing is available for student accounts only. Staff details are managed by the administration.</Text>
+      <View style={s.screen}>
+        <Text style={s.staffMsg}>
+          Profile editing is available for student accounts only. Staff details are managed by the administration.
+        </Text>
       </View>
     );
   }
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#F7FAFB' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      {header}
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView style={s.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 24, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <View style={{ alignItems: 'center', marginBottom: 24 }}>
           <View style={s.avatar}>
             <Text style={s.avatarText}>{initialsOf(fullName)}</Text>
           </View>
         </View>
 
-        <Text style={s.label}>Full name</Text>
+        <Text style={[s.label, { marginTop: 0 }]}>Full name</Text>
         <TextInput
           style={[s.input, errors.name && s.inputErr]}
           value={fullName}
@@ -152,8 +139,7 @@ export default function PersonalInfoScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#1F2937' },
+  screen: { flex: 1, backgroundColor: '#F7FAFB' },
   avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: TEAL, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 32, fontWeight: '700' },
   label: { fontSize: 13, fontWeight: '600', color: '#1F2937', marginBottom: 6, marginTop: 16 },

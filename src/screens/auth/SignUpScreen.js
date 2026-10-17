@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -40,7 +41,7 @@ export default function SignUpScreen({ navigation }) {
     ]).start();
   };
 
-  const canSubmit = fullName.trim() && studentId.trim() && isValidEmail(email) && password.length >= 6 && agreed;
+  const canSubmit = fullName.trim() && studentId.trim() && isValidEmail(email.trim()) && password.length >= 6 && agreed;
 
   const handleSignUp = async () => {
     if (!fullName.trim() || !studentId.trim()) {
@@ -48,7 +49,7 @@ export default function SignUpScreen({ navigation }) {
       runShake();
       return;
     }
-    if (!isValidEmail(email)) {
+    if (!isValidEmail(email.trim())) {
       setError('Please enter a valid email address.');
       runShake();
       return;
@@ -61,8 +62,16 @@ export default function SignUpScreen({ navigation }) {
     setLoading(true);
     setError('');
     try {
-      await signUpStudent(fullName, studentId, email, password);
-      navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+      const result = await signUpStudent(fullName, studentId, email, password);
+      if (result?.needsEmailConfirmation) {
+        Alert.alert(
+          'Account Created',
+          'A confirmation link has been sent to your email. Please confirm your email address, then log in.',
+          [{ text: 'OK', onPress: () => navigation.navigate('Login') }]
+        );
+      } else {
+        navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+      }
     } catch (e) {
       console.warn('Sign up failed:', e.message);
       if (e.message?.toLowerCase().includes('already registered')) {

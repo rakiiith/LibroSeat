@@ -13,6 +13,7 @@ import SignUpScreen from '../screens/auth/SignUpScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import ResetPasswordScreen from '../screens/auth/ResetPasswordScreen';
 import StaffLoginScreen from '../screens/auth/StaffLoginScreen';
+import TermsScreen from '../screens/auth/TermsScreen';
 
 import BookDetailsScreen from '../screens/book/BookDetailsScreen';
 import ReserveBookScreen from '../screens/book/ReserveBookScreen';
@@ -23,12 +24,13 @@ import SelectSeatScreen from '../screens/seat/SelectSeatScreen';
 import SeatConfirmationScreen from '../screens/seat/SeatConfirmationScreen';
 
 import NotificationDetailScreen from '../screens/home_account/NotificationDetailScreen';
-import MyReservationsScreen from '../screens/home_account/MyReservationsScreen';
+import MyReservationsScreen from '../screens/seat/MyReservationsScreen';
 import ReservationDetailScreen from '../screens/home_account/ReservationDetailScreen';
 import PersonalInfoScreen from '../screens/home_account/PersonalInfoScreen';
 import SettingsScreen from '../screens/home_account/SettingsScreen';
 
 import SeatAllocationScreen from '../screens/admin/SeatAllocationScreen';
+import StaffProfileScreen from '../screens/admin/StaffProfileScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -53,6 +55,7 @@ export default function AppNavigator() {
         <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ title: 'Reset Password' }} />
         <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} options={{ title: 'Reset Password' }} />
         <Stack.Screen name="StaffLogin" component={StaffLoginScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="TermsAndConditions" component={TermsScreen} options={{ headerShown: false }} />
 
         {/* Route names "Home" and "AdminDashboard" are kept so Login /
             SignUp / Welcome / ResetPassword need no changes. */}
@@ -75,6 +78,7 @@ export default function AppNavigator() {
         <Stack.Screen name="SeatConfirmation" component={SeatConfirmationScreen} options={{ title: 'Confirmation', headerBackVisible: false }} />
 
         <Stack.Screen name="SeatAllocation" component={SeatAllocationScreen} options={{ title: 'Seat Allocation' }} />
+        <Stack.Screen name="StaffProfile" component={StaffProfileScreen} options={{ headerShown: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

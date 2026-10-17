@@ -40,16 +40,15 @@ export default function StaffLoginScreen({ navigation }) {
       runShake();
       return;
     }
+
     setLoading(true);
     setError('');
     try {
       await signInStaff(staffId, password);
       navigation.reset({ index: 0, routes: [{ name: 'AdminDashboard' }] });
     } catch (e) {
-      // Logged for debugging, but the user only ever sees the generic
-      // message below — don't reveal whether the ID or password was wrong.
       console.warn('Staff login failed:', e.message);
-      setError('Invalid staff ID or password.');
+      setError(e?.message || 'Invalid staff ID or password.');
       runShake();
     } finally {
       setLoading(false);

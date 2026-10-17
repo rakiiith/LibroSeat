@@ -4,14 +4,12 @@ import {
   Platform, ScrollView, ActivityIndicator, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { requestPasswordReset, confirmPasswordReset, signOutAccount } from '../../supabase/authService';
 
 const TEAL = '#14919B';
 const RED = '#E53935';
 
 export default function ResetPasswordScreen({ navigation, route }) {
-  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState(route?.params?.email || '');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
@@ -73,11 +71,7 @@ export default function ResetPasswordScreen({ navigation, route }) {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#fff' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={{ padding: 24, paddingTop: insets.top + 12, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-        <Pressable onPress={() => navigation.goBack()} hitSlop={12} style={{ marginBottom: 24 }}>
-          <Ionicons name="arrow-back" size={24} color="#1F2937" />
-        </Pressable>
-
+      <ScrollView contentContainerStyle={{ padding: 24, paddingTop: 24, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <View style={s.iconWrap}>
           <Ionicons name="key-outline" size={34} color={TEAL} />
         </View>
