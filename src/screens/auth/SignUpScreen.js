@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -61,7 +62,15 @@ export default function SignUpScreen({ navigation }) {
     setLoading(true);
     setError('');
     try {
-      await signUpStudent(fullName, studentId, email, password);
+      const result = await signUpStudent(fullName, studentId, email, password);
+      if (result.needsEmailConfirmation) {
+        Alert.alert(
+          'Confirm your email',
+          'Your account was created. Open the confirmation email before logging in.',
+          [{ text: 'OK', onPress: () => navigation.navigate('Login') }],
+        );
+        return;
+      }
       navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
     } catch (e) {
       console.warn('Sign up failed:', e.message);

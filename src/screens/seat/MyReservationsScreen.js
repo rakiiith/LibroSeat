@@ -13,13 +13,62 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import {
-  cancelSeatReservation,
-  fetchMySeatReservations,
-  getCurrentUser,
-  localDateString,
-  subscribeToSeatReservations,
-} from './seatReservationService';
+import { supabase } from '../../supabase/supabaseConfig';
+import { normalizeSeat } from './seatData';
+
+async function getCurrentUser() {
+  const { data, error } = await supabase.auth.getUser();
+  if (error) throw error;
+  if (!data?.user) throw new Error('Please sign in to manage seat reservations.');
+  return data.user;
+}
+
+function normalizeReservation(row) {
+  const { seats, student_id, reservation_date, ...rest } = row;
+  return {
+    ...rest,
+    user_id: student_id,
+    booking_date: reservation_date,
+    status: row.status === 'reserved' || row.status === 'checked_in' ? 'confirmed' : row.status,
+    library_seats: seats ? normalizeSeat(seats) : null,
+  };
+}
+
+async function fetchMySeatReservations(userId) {
+  const { data, error } = await supabase
+    .from('seat_reservations')
+    .select(`id, seat_id, student_id, reservation_date, start_time, end_time, status,
+      seats (*)`)
+    .eq('student_id', userId)
+    .order('reservation_date', { ascending: true })
+    .order('start_time', { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(normalizeReservation);
+}
+
+async function cancelSeatReservation(reservationId, userId) {
+  const { data, error } = await supabase
+    .from('seat_reservations')
+    .update({ status: 'cancelled' })
+    .eq('id', reservationId)
+    .eq('student_id', userId)
+    .eq('status', 'reserved')
+    .select('id')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('This reservation is no longer eligible for cancellation. Refresh and try again.');
+  return data;
+}
+
+function subscribeToSeatReservations(onChange, userId) {
+  const channel = supabase
+    .channel(`seat-reservations-${userId}`)
+    .on('postgres_changes', {
+      event: '*', schema: 'public', table: 'seat_reservations', filter: `student_id=eq.${userId}`,
+    }, onChange)
+    .subscribe();
+  return () => supabase.removeChannel(channel);
+}
 
 const C = {
   bg: '#F4F7F8', white: '#FFFFFF', teal: '#0F8B8D', dark: '#08696C',

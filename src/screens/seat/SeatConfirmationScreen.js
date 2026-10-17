@@ -13,7 +13,63 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { createSeatReservation } from './seatReservationService';
+import { supabase } from '../../supabase/supabaseConfig';
+import { LIBRARY_CLOSE_TIME, LIBRARY_OPEN_TIME } from '../../config/libraryHours';
+
+function timeMinutes(value) {
+  const [hours, minutes] = String(value || '').split(':').map(Number);
+  return (hours || 0) * 60 + (minutes || 0);
+}
+
+async function createSeatReservation({ seatId, bookingDate, startTime, endTime }) {
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError) throw authError;
+  if (!authData?.user) throw new Error('Please sign in to reserve a seat.');
+
+  const { data: overlapping, error: overlapError } = await supabase
+    .from('seat_reservations')
+    .select('id')
+    .eq('seat_id', seatId)
+    .eq('reservation_date', bookingDate)
+    .in('status', ['reserved', 'checked_in'])
+    .lt('start_time', endTime)
+    .gt('end_time', startTime)
+    .limit(1);
+  if (overlapError) throw overlapError;
+  if (overlapping?.length) {
+    const conflict = new Error('This seat is already reserved during part of that time. Choose another time or seat.');
+    conflict.code = '23P01';
+    throw conflict;
+  }
+
+  const { data, error } = await supabase
+    .from('seat_reservations')
+    .insert({
+      seat_id: seatId,
+      student_id: authData.user.id,
+      reservation_date: bookingDate,
+      start_time: startTime,
+      end_time: endTime,
+      status: 'reserved',
+    })
+    .select('id, seat_id, student_id, reservation_date, start_time, end_time, status')
+    .single();
+
+  if (error) {
+    if (error.code === '23P01' || error.code === '23505') {
+      const conflict = new Error('This seat was just reserved for that time. Choose another seat or time.');
+      conflict.code = error.code;
+      throw conflict;
+    }
+    throw error;
+  }
+  return {
+    ...data,
+    user_id: data.student_id,
+    booking_date: data.reservation_date,
+    status: data.status === 'reserved' || data.status === 'checked_in' ? 'confirmed' : data.status,
+  };
+}
 
 const C = {
   bg: '#F4F7F8', white: '#FFFFFF', teal: '#0F8B8D',
@@ -30,9 +86,11 @@ function dateString(date) {
 
 export default function SeatConfirmationScreen({ route, navigation }) {
   const seat = route?.params?.seat;
-  const [date, setDate] = useState(dateString(new Date()));
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('10:00');
+  const selectedArea = route?.params?.studyArea;
+  const selectedFloor = route?.params?.floor ?? seat?.reading_rooms?.floor;
+  const [date, setDate] = useState(route?.params?.bookingDate || dateString(new Date()));
+  const [startTime, setStartTime] = useState(route?.params?.startTime || '09:00');
+  const [endTime, setEndTime] = useState(route?.params?.endTime || '10:00');
   const [saving, setSaving] = useState(false);
   const [confirmed, setConfirmed] = useState(null);
   const savingRef = useRef(false);
@@ -75,6 +133,14 @@ export default function SeatConfirmationScreen({ route, navigation }) {
 
     if (startTime >= endTime) {
       Alert.alert('Invalid time', 'End time must be later than start time.');
+      return;
+    }
+
+    if (timeMinutes(startTime) < timeMinutes(LIBRARY_OPEN_TIME)
+      || timeMinutes(startTime) >= timeMinutes(LIBRARY_CLOSE_TIME)
+      || timeMinutes(endTime) > timeMinutes(LIBRARY_CLOSE_TIME)
+      || timeMinutes(endTime) <= timeMinutes(LIBRARY_OPEN_TIME)) {
+      Alert.alert('Outside library hours', `Choose a time between ${LIBRARY_OPEN_TIME} and ${LIBRARY_CLOSE_TIME}.`);
       return;
     }
 
@@ -128,6 +194,7 @@ export default function SeatConfirmationScreen({ route, navigation }) {
           <Text style={styles.eyebrow}>CONFIRMED SEAT</Text>
           <Text style={styles.successSeat}>Seat {seat.seat_number}</Text>
           <Text style={styles.successRoom}>{seat.reading_rooms?.name ?? 'Reading room'}</Text>
+          {!!selectedArea && <Text style={styles.successRoom}>{selectedFloor || 'Library'} · {selectedArea}</Text>}
           <View style={styles.divider}/>
           <Text style={styles.successMeta}>DATE   {date}</Text>
           <Text style={styles.successMeta}>TIME   {startTime} – {endTime}</Text>
@@ -144,6 +211,11 @@ export default function SeatConfirmationScreen({ route, navigation }) {
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.brand}>LIBROSEAT / RESERVATION</Text>
+        <View style={styles.progress}>
+          <View style={styles.progressDone}><Text style={styles.progressDoneText}>1</Text></View><View style={styles.progressDoneLine} />
+          <View style={styles.progressDone}><Text style={styles.progressDoneText}>2</Text></View><View style={styles.progressCurrentLine} />
+          <View style={styles.progressCurrent}><Text style={styles.progressCurrentText}>3</Text></View>
+        </View>
         <Text style={styles.title}>Confirm your seat</Text>
         <Text style={styles.subtitle}>
           Review your study session before reserving.
@@ -156,7 +228,7 @@ export default function SeatConfirmationScreen({ route, navigation }) {
             {seat.reading_rooms?.name ?? 'Reading room'}
           </Text>
           <Text style={styles.floor}>
-            Floor {seat.reading_rooms?.floor ?? '—'} · {seat.seat_type || 'Standard'}
+            {selectedFloor || 'Floor —'} · {selectedArea || seat.seat_type || 'Standard'}
           </Text>
         </View>
 
@@ -238,6 +310,13 @@ const styles = StyleSheet.create({
     padding: 24, backgroundColor: C.bg,
   },
   brand: { color: C.teal, fontSize: 10, fontWeight: '900', letterSpacing: 2, marginTop: 10 },
+  progress: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 24, marginBottom: 7 },
+  progressDone: { width: 30, height: 30, borderRadius: 15, backgroundColor: C.teal, alignItems: 'center', justifyContent: 'center' },
+  progressDoneText: { color: C.white, fontSize: 12, fontWeight: '800' },
+  progressCurrent: { width: 30, height: 30, borderRadius: 15, backgroundColor: C.teal, alignItems: 'center', justifyContent: 'center' },
+  progressCurrentText: { color: C.white, fontSize: 12, fontWeight: '800' },
+  progressDoneLine: { width: 38, height: 2, backgroundColor: C.teal },
+  progressCurrentLine: { width: 38, height: 2, backgroundColor: '#5CC9BE' },
   title: { color: C.text, fontSize: 28, fontWeight: '900', marginTop: 13 },
   subtitle: { color: C.muted, fontSize: 13, lineHeight: 20, marginTop: 8, marginBottom: 22 },
   seatCard: {
