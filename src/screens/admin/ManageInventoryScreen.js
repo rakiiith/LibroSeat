@@ -167,9 +167,16 @@ export default function ManageInventoryScreen({ navigation }) {
         </View>
         <View style={styles.headerIcons}>
           <Ionicons name="barcode-outline" size={22} color={colors.text} style={styles.iconMargin} />
-          <View style={styles.profileAvatar}>
+          <TouchableOpacity 
+            style={styles.profileAvatar}
+            onPress={() => navigation.navigate('StaffProfile')}
+            accessibilityRole="button"
+            accessibilityLabel="Staff profile"
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Ionicons name="person" size={14} color={colors.white} />
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -469,7 +476,8 @@ const styles = StyleSheet.create({
   iconMargin: { marginRight: spacing.md },
   profileAvatar: { 
     width: 28, height: 28, borderRadius: 14, 
-    backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center' 
+    backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center',
+    cursor: 'pointer',
   },
 
   /* Title Row */

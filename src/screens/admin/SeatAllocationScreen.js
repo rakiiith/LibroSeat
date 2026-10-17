@@ -34,7 +34,7 @@ function formatDisplayDate(dateStr) {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function SeatAllocationScreen({ route }) {
+export default function SeatAllocationScreen({ navigation, route }) {
   const [seats, setSeats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedSeat, setSelectedSeat] = useState(null);
@@ -186,8 +186,10 @@ export default function SeatAllocationScreen({ route }) {
           <Ionicons name="search" size={20} color={colors.text} style={styles.iconMargin} />
           <TouchableOpacity 
             style={styles.profileAvatar}
-            onPress={() => setLogoutModalVisible(true)}
+            onPress={() => navigation?.navigate('StaffProfile')}
             accessibilityRole="button"
+            accessibilityLabel="Staff profile"
+            activeOpacity={0.7}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="person" size={14} color={colors.white} />

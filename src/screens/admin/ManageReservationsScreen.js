@@ -302,19 +302,16 @@ export default function ManageReservationsScreen({ navigation }) {
           </View>
         </View>
         <View style={styles.headerIcons}>
-          <Pressable 
-            style={({ pressed, hovered }) => [
-              styles.profileAvatar,
-              hovered && styles.profileAvatarHovered,
-              pressed && { opacity: 0.7 }
-            ]}
-            onPress={() => setProfileModalVisible(true)}
+          <TouchableOpacity 
+            style={styles.profileAvatar}
+            onPress={() => navigation?.navigate('StaffProfile')}
             accessibilityRole="button"
             accessibilityLabel="Staff profile and account"
-            hitSlop={10}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="person" size={14} color={colors.white} />
-          </Pressable>
+          </TouchableOpacity>
         </View>
       </View>
 

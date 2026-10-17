@@ -29,6 +29,7 @@ import PersonalInfoScreen from '../screens/home_account/PersonalInfoScreen';
 import SettingsScreen from '../screens/home_account/SettingsScreen';
 
 import SeatAllocationScreen from '../screens/admin/SeatAllocationScreen';
+import StaffProfileScreen from '../screens/admin/StaffProfileScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -75,6 +76,7 @@ export default function AppNavigator() {
         <Stack.Screen name="SeatConfirmation" component={SeatConfirmationScreen} options={{ title: 'Confirmation', headerBackVisible: false }} />
 
         <Stack.Screen name="SeatAllocation" component={SeatAllocationScreen} options={{ title: 'Seat Allocation' }} />
+        <Stack.Screen name="StaffProfile" component={StaffProfileScreen} options={{ headerShown: false }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
