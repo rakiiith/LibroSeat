@@ -208,9 +208,16 @@ export default function ManageInventoryScreen({ navigation }) {
         </View>
         <View style={styles.headerIcons}>
           <Ionicons name="barcode-outline" size={22} color={colors.text} style={styles.iconMargin} />
-          <View style={styles.profileAvatar}>
+          <TouchableOpacity 
+            style={styles.profileAvatar}
+            onPress={() => navigation.navigate('StaffProfile')}
+            accessibilityRole="button"
+            accessibilityLabel="Staff profile"
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Ionicons name="person" size={14} color={colors.white} />
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -529,7 +536,8 @@ const styles = StyleSheet.create({
   iconMargin: { marginRight: spacing.md },
   profileAvatar: { 
     width: 28, height: 28, borderRadius: 14, 
-    backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center' 
+    backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center',
+    cursor: 'pointer',
   },
 
   /* Title Row */
@@ -548,7 +556,17 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
     borderWidth: 1, borderColor: colors.border
   },
-  searchInput: { flex: 1, marginLeft: spacing.sm, fontSize: 14, color: colors.text },
+  searchInput: { 
+    flex: 1, 
+    marginLeft: spacing.sm, 
+    fontSize: 14, 
+    color: colors.text,
+    borderWidth: 0,
+    outlineStyle: 'none',
+    backgroundColor: 'transparent',
+    paddingVertical: 0,
+    height: '100%',
+  },
   searchBarcodeIcon: { backgroundColor: '#F3F4F6', padding: 4, borderRadius: 4 },
   addButton: {
     width: 44, height: 44, backgroundColor: colors.primary,

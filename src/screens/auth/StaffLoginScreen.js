@@ -17,8 +17,8 @@ import { PrimaryButton, OutlineButton } from '../../components/UIKit';
 import { signInStaff } from '../../supabase/authService';
 
 export default function StaffLoginScreen({ navigation }) {
-  const [staffId, setStaffId] = useState('admin@libroseat.com');
-  const [password, setPassword] = useState('password123');
+  const [staffId, setStaffId] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberDevice, setRememberDevice] = useState(false);
   const [error, setError] = useState('');
@@ -40,12 +40,6 @@ export default function StaffLoginScreen({ navigation }) {
       runShake();
       return;
     }
-    
-    // HARDCODED CREDENTIAL
-    if (staffId.trim().toLowerCase() === 'admin@libroseat.com' && password === 'password123') {
-      navigation.reset({ index: 0, routes: [{ name: 'AdminDashboard' }] });
-      return;
-    }
 
     setLoading(true);
     setError('');
@@ -54,7 +48,7 @@ export default function StaffLoginScreen({ navigation }) {
       navigation.reset({ index: 0, routes: [{ name: 'AdminDashboard' }] });
     } catch (e) {
       console.warn('Staff login failed:', e.message);
-      setError('Invalid staff ID or password.');
+      setError(e?.message || 'Invalid staff ID or password.');
       runShake();
     } finally {
       setLoading(false);

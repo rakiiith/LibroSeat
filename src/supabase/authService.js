@@ -105,7 +105,7 @@ export async function signInStaff(...args) {
   }
 
   const profile = await getSupabaseProfile(data.user.id);
-  if (!profile || profile.role !== 'staff') {
+  if (!profile || (profile.role !== 'staff' && profile.role !== 'admin')) {
     await supabase.auth.signOut();
     throw new Error('This account does not have staff access.');
   }

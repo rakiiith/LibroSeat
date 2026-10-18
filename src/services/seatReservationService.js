@@ -18,7 +18,8 @@ export async function fetchSeatsWithAvailability(dateStr, slot) {
     .from('seat_reservations')
     .select('seat_id, status')
     .eq('reservation_date', dateStr)
-    .eq('start_time', slot.start)
+    .lt('start_time', slot.end)
+    .gt('end_time', slot.start)
     .in('status', ['reserved', 'checked_in']);
 
   if (resErr) throw resErr;
@@ -102,7 +103,8 @@ export async function processNoShows(dateStr, slot) {
       .from('seat_reservations')
       .update({ status: 'no_show' })
       .eq('reservation_date', dateStr)
-      .eq('start_time', slot.start)
+      .lt('start_time', slot.end)
+      .gt('end_time', slot.start)
       .eq('status', 'reserved');
     if (error) console.error('Failed to process no_shows', error);
   }
@@ -114,11 +116,13 @@ export async function fetchAdminSeatData(dateStr, slot) {
   const { data: seats, error: seatErr } = await supabase.from('seats').select('*').order('seat_number');
   if (seatErr) throw seatErr;
 
+  // Interval overlap: existing_start < requested_end AND existing_end > requested_start
   const { data: reservations, error: resErr } = await supabase
     .from('seat_reservations')
     .select('*, profiles(full_name, student_id)')
     .eq('reservation_date', dateStr)
-    .eq('start_time', slot.start);
+    .lt('start_time', slot.end)
+    .gt('end_time', slot.start);
 
   if (resErr) throw resErr;
 
