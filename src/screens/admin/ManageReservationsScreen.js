@@ -22,6 +22,7 @@ export default function ManageReservationsScreen({ navigation }) {
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [notifyingId, setNotifyingId] = useState(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -146,6 +147,86 @@ export default function ManageReservationsScreen({ navigation }) {
     }
   };
 
+  const handleNotify = async (item) => {
+    const targetUserId = item?.user_id || item?.student_id;
+    if (!targetUserId) {
+      const errMsg = 'No student user account linked to this reservation.';
+      if (Platform.OS === 'web') {
+        window.alert(errMsg);
+      } else {
+        Alert.alert('Notice', errMsg);
+      }
+      return;
+    }
+
+    const patronName = item.profile?.full_name || 'Student';
+    const isSeat = item.type === 'seat' || item.type === 'seat_adv';
+    const seatNum = item.item?.seat_number || item.seat_number || '';
+    const zoneName = item.item?.zone || item.item?.room || '';
+    const resourceName = isSeat
+      ? `Carrel ${seatNum || '?'}${zoneName ? ` (${zoneName})` : ''}`
+      : (item.item?.title || 'Book');
+
+    let msg = `Reminder: Please check in for your reservation at ${resourceName}.`;
+    if (item.status === 'no_show' || item.status === 'unattended') {
+      msg = `Urgent Notice: Your reservation for ${resourceName} has been marked as No-Show. Please check in promptly or your reservation will be released.`;
+    } else if (item.status === 'overdue') {
+      msg = `Notice: Your reservation for ${resourceName} is overdue. Please return or check out to avoid penalties.`;
+    } else if (item.status === 'reserved') {
+      msg = `Check-in Reminder: Your reservation for ${resourceName} is active. Please check in to claim your seat.`;
+    }
+
+    try {
+      setNotifyingId(item.id);
+      const notifType = (item.status === 'no_show' || item.status === 'unattended' || item.status === 'overdue') ? 'expiry' : 'default';
+      const { error } = await supabase.from('notifications').insert({
+        user_id: targetUserId,
+        message: msg,
+        type: notifType,
+        related_reservation_id: item.id || null,
+        is_read: false,
+      });
+
+      if (error) throw error;
+
+      const successText = `Alert successfully sent to ${patronName}:\n\n"${msg}"`;
+      if (Platform.OS === 'web') {
+        window.alert(successText);
+      } else {
+        Alert.alert('Notification Sent', successText);
+      }
+    } catch (err) {
+      console.warn('Error sending notification:', err);
+      const errText = err.message || 'Failed to send notification.';
+      if (Platform.OS === 'web') {
+        window.alert(`Notification Error: ${errText}`);
+      } else {
+        Alert.alert('Notification Error', errText);
+      }
+    } finally {
+      setNotifyingId(null);
+    }
+  };
+
+  const handleExtendHold = async (item) => {
+    try {
+      setLoading(true);
+      const currentDue = item.due_date ? new Date(item.due_date) : new Date();
+      currentDue.setDate(currentDue.getDate() + 3);
+      const { error } = await supabase
+        .from('reservations')
+        .update({ due_date: currentDue.toISOString() })
+        .eq('id', item.id);
+      if (error) throw error;
+      await fetchData(false);
+      Alert.alert('Hold Extended', 'Reservation hold extended by 3 days.');
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Failed to extend hold.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const renderItem = ({ item }) => {
     // Dynamic mappings based on database structure
     const patronName = item.profile?.full_name || 'Unknown Student';
@@ -260,9 +341,19 @@ export default function ManageReservationsScreen({ navigation }) {
         <View style={styles.actionRow}>
           {(item.type === 'seat' || item.type === 'seat_adv') ? (
             <>
-              <TouchableOpacity style={styles.btnSecondary}>
-                <Ionicons name="notifications-outline" size={16} color="#4B5563" style={styles.btnIcon} />
-                <Text style={styles.btnSecondaryText}>Notify</Text>
+              <TouchableOpacity 
+                style={[styles.btnSecondary, (item.status === 'cancelled' || notifyingId === item.id) && { opacity: 0.5 }]} 
+                onPress={() => handleNotify(item)} 
+                disabled={item.status === 'cancelled' || notifyingId === item.id}
+                accessibilityRole="button"
+                accessibilityLabel="Notify student"
+              >
+                {notifyingId === item.id ? (
+                  <ActivityIndicator size="small" color="#4B5563" style={styles.btnIcon} />
+                ) : (
+                  <Ionicons name="notifications-outline" size={16} color="#4B5563" style={styles.btnIcon} />
+                )}
+                <Text style={styles.btnSecondaryText}>{notifyingId === item.id ? 'Sending...' : 'Notify'}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.btnDanger, item.status === 'cancelled' && {opacity: 0.5}]} onPress={() => handleRelease(item)} disabled={item.status === 'cancelled'}>
                 <Ionicons name="log-out-outline" size={16} color={colors.white} style={styles.btnIcon} />

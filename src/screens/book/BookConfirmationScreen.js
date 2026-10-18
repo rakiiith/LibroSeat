@@ -13,7 +13,10 @@ function formatDate(value) {
 export default function BookConfirmationScreen({ route, navigation }) {
   const { book, reservation } = route?.params || {};
   const reservationCode =
-    reservation?.reservation_code || reservation?.reservationCode || reservation?.id || '—';
+    reservation?.reservation_code ||
+    reservation?.reservationCode ||
+    (typeof reservation === 'string' ? reservation : reservation?.id) ||
+    '—';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
