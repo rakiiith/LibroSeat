@@ -1,109 +1,109 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Animated,
   ActivityIndicator,
   Alert,
+  Animated,
+  Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
-import { supabase } from '../../supabase/supabaseConfig';
-import { LIBRARY_CLOSE_TIME, LIBRARY_OPEN_TIME } from '../../config/libraryHours';
-
-function timeMinutes(value) {
-  const [hours, minutes] = String(value || '').split(':').map(Number);
-  return (hours || 0) * 60 + (minutes || 0);
-}
-
-async function createSeatReservation({ seatId, bookingDate, startTime, endTime }) {
-  const { data: authData, error: authError } = await supabase.auth.getUser();
-  if (authError) throw authError;
-  if (!authData?.user) throw new Error('Please sign in to reserve a seat.');
-
-  const { data: overlapping, error: overlapError } = await supabase
-    .from('seat_reservations')
-    .select('id')
-    .eq('seat_id', seatId)
-    .eq('reservation_date', bookingDate)
-    .in('status', ['reserved', 'checked_in'])
-    .lt('start_time', endTime)
-    .gt('end_time', startTime)
-    .limit(1);
-  if (overlapError) throw overlapError;
-  if (overlapping?.length) {
-    const conflict = new Error('This seat is already reserved during part of that time. Choose another time or seat.');
-    conflict.code = '23P01';
-    throw conflict;
-  }
-
-  const { data, error } = await supabase
-    .from('seat_reservations')
-    .insert({
-      seat_id: seatId,
-      student_id: authData.user.id,
-      reservation_date: bookingDate,
-      start_time: startTime,
-      end_time: endTime,
-      status: 'reserved',
-    })
-    .select('id, seat_id, student_id, reservation_date, start_time, end_time, status')
-    .single();
-
-  if (error) {
-    if (error.code === '23P01' || error.code === '23505') {
-      const conflict = new Error('This seat was just reserved for that time. Choose another seat or time.');
-      conflict.code = error.code;
-      throw conflict;
-    }
-    throw error;
-  }
-  return {
-    ...data,
-    user_id: data.student_id,
-    booking_date: data.reservation_date,
-    status: data.status === 'reserved' || data.status === 'checked_in' ? 'confirmed' : data.status,
-  };
-}
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { createSeatReservation, getCurrentUser } from './seatReservationService';
 
 const C = {
-  bg: '#F4F7F8', white: '#FFFFFF', teal: '#0F8B8D',
-  dark: '#08696C', text: '#18323B', muted: '#71838A',
-  border: '#DFE8EA',
+  bg: '#F4F8F9', white: '#FFFFFF', teal: '#0F9292', dark: '#0A686B',
+  text: '#18323B', muted: '#74868E', border: '#E2EBED', pale: '#E7F7F5',
 };
 
-function dateString(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+function formatDate(value) {
+  if (!value) return 'Date not set';
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString(undefined, {
+    weekday: 'long', month: 'short', day: 'numeric', year: 'numeric',
+  });
+}
+
+function formatTime(value) {
+  if (!value) return '—';
+  const [hourString, minute = '00'] = value.slice(0, 5).split(':');
+  const hour = Number(hourString);
+  if (Number.isNaN(hour)) return value;
+  return `${hour % 12 || 12}:${minute} ${hour >= 12 ? 'PM' : 'AM'}`;
+}
+
+function duration(start, end) {
+  const toMinutes = value => {
+    const [hour, minute] = (value || '').slice(0, 5).split(':').map(Number);
+    return (hour || 0) * 60 + (minute || 0);
+  };
+  const minutes = toMinutes(end) - toMinutes(start);
+  if (minutes <= 0) return '';
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return [hours ? `${hours} ${hours === 1 ? 'hour' : 'hours'}` : '', rest ? `${rest} min` : ''].filter(Boolean).join(' ');
+}
+
+function StepProgress() {
+  return (
+    <View style={styles.progress}>
+      {[['1', 'Select'], ['2', 'Details'], ['3', 'Confirm']].map(([number, label], index) => (
+        <React.Fragment key={number}>
+          <View style={styles.step}>
+            <View style={[styles.stepCircle, index === 2 && styles.stepCurrent]}>
+              <Text style={styles.stepNumber}>{number}</Text>
+            </View>
+            <Text style={[styles.stepLabel, index === 2 && styles.stepLabelCurrent]}>{label}</Text>
+          </View>
+          {index < 2 && <View style={[styles.stepLine, index === 1 && styles.stepLineActive]} />}
+        </React.Fragment>
+      ))}
+    </View>
+  );
+}
+
+function SummaryRow({ icon, label, value, subvalue }) {
+  return (
+    <View style={styles.summaryRow}>
+      <View style={styles.summaryIcon}><Ionicons name={icon} size={19} color={C.teal} /></View>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <View style={styles.summaryValueWrap}>
+        <Text style={styles.summaryValue}>{value}</Text>
+        {!!subvalue && <Text style={styles.summarySubvalue}>{subvalue}</Text>}
+      </View>
+    </View>
+  );
 }
 
 export default function SeatConfirmationScreen({ route, navigation }) {
+  const { width } = useWindowDimensions();
   const seat = route?.params?.seat;
-  const selectedArea = route?.params?.studyArea;
-  const selectedFloor = route?.params?.floor ?? seat?.reading_rooms?.floor;
-  const [date, setDate] = useState(route?.params?.bookingDate || dateString(new Date()));
-  const [startTime, setStartTime] = useState(route?.params?.startTime || '09:00');
-  const [endTime, setEndTime] = useState(route?.params?.endTime || '10:00');
+  const bookingDate = route?.params?.bookingDate;
+  const startTime = route?.params?.startTime;
+  const endTime = route?.params?.endTime;
+  const room = route?.params?.room || seat?.reading_rooms?.name || seat?.zone || 'Main Library';
+  const floor = route?.params?.floor ?? seat?.reading_rooms?.floor;
+  const studyArea = route?.params?.studyArea;
+  const [student, setStudent] = useState(null);
   const [saving, setSaving] = useState(false);
   const [confirmed, setConfirmed] = useState(null);
   const savingRef = useRef(false);
   const successScale = useRef(new Animated.Value(0.75)).current;
+  const contentStyle = Platform.OS === 'web' && width > 700 ? styles.wideContent : null;
+
+  useEffect(() => {
+    getCurrentUser().then(setStudent).catch(() => setStudent(null));
+  }, []);
 
   useEffect(() => {
     if (!confirmed) return;
-    Animated.spring(successScale, {
-      toValue: 1,
-      useNativeDriver: true,
-      friction: 5,
-      tension: 100,
-    }).start();
+    Animated.spring(successScale, { toValue: 1, useNativeDriver: true, friction: 5, tension: 100 }).start();
   }, [confirmed, successScale]);
 
   const submit = async () => {
@@ -112,60 +112,20 @@ export default function SeatConfirmationScreen({ route, navigation }) {
       Alert.alert('Seat missing', 'Return to seat selection and choose a seat.');
       return;
     }
-
-    const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(date);
-    const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
-
-    if (!dateValid || !timePattern.test(startTime) || !timePattern.test(endTime)) {
-      Alert.alert('Invalid details', 'Use date YYYY-MM-DD and times HH:MM.');
+    if (!bookingDate || !startTime || !endTime) {
+      Alert.alert('Reservation details missing', 'Go back and choose a date and time.');
       return;
-    }
-
-    const chosenDate = new Date(`${date}T00:00:00`);
-    if (
-      Number.isNaN(chosenDate.getTime()) ||
-      dateString(chosenDate) !== date ||
-      date < dateString(new Date())
-    ) {
-      Alert.alert('Invalid date', 'Choose today or a future date.');
-      return;
-    }
-
-    if (startTime >= endTime) {
-      Alert.alert('Invalid time', 'End time must be later than start time.');
-      return;
-    }
-
-    if (timeMinutes(startTime) < timeMinutes(LIBRARY_OPEN_TIME)
-      || timeMinutes(startTime) >= timeMinutes(LIBRARY_CLOSE_TIME)
-      || timeMinutes(endTime) > timeMinutes(LIBRARY_CLOSE_TIME)
-      || timeMinutes(endTime) <= timeMinutes(LIBRARY_OPEN_TIME)) {
-      Alert.alert('Outside library hours', `Choose a time between ${LIBRARY_OPEN_TIME} and ${LIBRARY_CLOSE_TIME}.`);
-      return;
-    }
-
-    if (date === dateString(new Date())) {
-      const now = new Date();
-      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      if (startTime <= currentTime) {
-        Alert.alert('Invalid time', 'Choose a start time later than the current time.');
-        return;
-      }
     }
 
     savingRef.current = true;
     setSaving(true);
-
     try {
       const reservation = await createSeatReservation({
-        seatId: seat.id,
-        bookingDate: date,
-        startTime,
-        endTime,
+        seatId: seat.id, bookingDate, startTime, endTime,
       });
       setConfirmed(reservation);
-    } catch (e) {
-      Alert.alert('Booking failed', e.message || 'Please try again.');
+    } catch (error) {
+      Alert.alert('Booking failed', error.message || 'Please try again.');
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -174,116 +134,100 @@ export default function SeatConfirmationScreen({ route, navigation }) {
 
   if (!seat) {
     return (
-      <SafeAreaView style={styles.center}>
-        <Text style={styles.title}>No seat selected</Text>
-        <Pressable style={styles.button} onPress={() => navigation.goBack()}>
-          <Text style={styles.buttonText}>Return to seat selection</Text>
-        </Pressable>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.emptyState}>
+          <Ionicons name="alert-circle-outline" size={38} color={C.teal} />
+          <Text style={styles.pageTitle}>No seat selected</Text>
+          <Pressable style={styles.primaryButton} onPress={() => navigation.goBack()}>
+            <Text style={styles.primaryButtonText}>Return to seat selection</Text>
+          </Pressable>
+        </View>
       </SafeAreaView>
     );
   }
 
   if (confirmed) {
-    return <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
-      <View style={styles.successPage}>
-        <Animated.View style={[styles.successMark, { transform: [{ scale: successScale }] }]}><Text style={styles.check}>✓</Text></Animated.View>
-        <Text style={styles.title}>Reservation confirmed</Text>
-        <Text style={styles.subtitle}>Your seat has been reserved successfully.</Text>
-        <View style={styles.successCard}>
-          <Text style={styles.eyebrow}>CONFIRMED SEAT</Text>
-          <Text style={styles.successSeat}>Seat {seat.seat_number}</Text>
-          <Text style={styles.successRoom}>{seat.reading_rooms?.name ?? 'Reading room'}</Text>
-          {!!selectedArea && <Text style={styles.successRoom}>{selectedFloor || 'Library'} · {selectedArea}</Text>}
-          <View style={styles.divider}/>
-          <Text style={styles.successMeta}>DATE   {date}</Text>
-          <Text style={styles.successMeta}>TIME   {startTime} – {endTime}</Text>
-          <Text style={styles.code}>Confirmation · {String(confirmed.id).slice(0, 8).toUpperCase()}</Text>
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
+        <View style={styles.successScreen}>
+          <View style={[styles.successContent, contentStyle]}>
+            <View style={styles.confettiArea}>
+              <View style={[styles.confetti, styles.confettiOne]} />
+              <View style={[styles.confetti, styles.confettiTwo]} />
+              <View style={[styles.confetti, styles.confettiThree]} />
+              <Animated.View style={[styles.successMark, { transform: [{ scale: successScale }] }]}>
+                <Ionicons name="checkmark" size={50} color={C.white} />
+              </Animated.View>
+            </View>
+            <Text style={styles.successTitle}>Reservation Successful!</Text>
+            <Text style={styles.successText}>Your seat {seat.seat_number} has been reserved.</Text>
+            <Text style={styles.successText}>See you at the library!</Text>
+            <Pressable style={styles.primaryButton} onPress={() => navigation.navigate('MyReservations')}>
+              <Text style={styles.primaryButtonText}>View My Reservations</Text>
+              <Ionicons name="arrow-forward" size={19} color={C.white} />
+            </Pressable>
+            <Pressable style={styles.outlineButton} onPress={() => navigation.navigate('SeatAvailability')}>
+              <Text style={styles.outlineButtonText}>Book Another Seat</Text>
+            </Pressable>
+          </View>
         </View>
-        <Pressable style={styles.button} onPress={() => navigation.navigate('MyReservations')}><Text style={styles.buttonText}>View my reservations</Text></Pressable>
-        <Pressable style={styles.doneButton} onPress={() => navigation.popToTop()}><Text style={styles.doneText}>Done</Text></Pressable>
-      </View>
-    </SafeAreaView>;
+      </SafeAreaView>
+    );
   }
 
+  const studentName = student?.user_metadata?.full_name || student?.user_metadata?.name || 'Student';
+  const studentId = student?.user_metadata?.student_id || student?.email || 'Signed in student';
+  const floorDescription = floor == null
+    ? ''
+    : (/floor/i.test(String(floor)) ? String(floor) : `Floor ${floor}`);
+  const roomDescription = [room, floorDescription, studyArea || ''].filter(Boolean).join(' · ');
+
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.brand}>LIBROSEAT / RESERVATION</Text>
-        <View style={styles.progress}>
-          <View style={styles.progressDone}><Text style={styles.progressDoneText}>1</Text></View><View style={styles.progressDoneLine} />
-          <View style={styles.progressDone}><Text style={styles.progressDoneText}>2</Text></View><View style={styles.progressCurrentLine} />
-          <View style={styles.progressCurrent}><Text style={styles.progressCurrentText}>3</Text></View>
+      <View style={styles.header}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => navigation.goBack()} style={styles.headerButton}>
+          <Ionicons name="arrow-back" size={20} color={C.text} />
+        </Pressable>
+        <Text style={styles.headerTitle}>Confirm Reservation</Text>
+        <View style={styles.headerButton}>
+          <Ionicons name="notifications-outline" size={20} color={C.text} />
         </View>
-        <Text style={styles.title}>Confirm your seat</Text>
-        <Text style={styles.subtitle}>
-          Review your study session before reserving.
-        </Text>
+      </View>
 
-        <View style={styles.seatCard}>
-          <Text style={styles.eyebrow}>YOUR SELECTED SEAT</Text>
-          <Text style={styles.seatNumber}>{seat.seat_number}</Text>
-          <Text style={styles.room}>
-            {seat.reading_rooms?.name ?? 'Reading room'}
-          </Text>
-          <Text style={styles.floor}>
-            {selectedFloor || 'Floor —'} · {selectedArea || seat.seat_type || 'Standard'}
-          </Text>
+      <ScrollView contentContainerStyle={[styles.scrollContent, contentStyle]} showsVerticalScrollIndicator={false}>
+        <StepProgress />
+        <Text style={styles.pageTitle}>Review your reservation</Text>
+        <Text style={styles.subtitle}>Make sure the details are correct before confirming.</Text>
+
+        <View style={styles.summaryCard}>
+          <Text style={styles.cardTitle}>Reservation Summary</Text>
+          <SummaryRow icon="tablet-portrait-outline" label="Seat Number" value={seat.seat_number || '—'} />
+          <SummaryRow icon="book-outline" label="Reading Room" value={roomDescription} />
+          <SummaryRow icon="calendar-outline" label="Date" value={formatDate(bookingDate)} />
+          <SummaryRow
+            icon="time-outline"
+            label="Time Slot"
+            value={`${formatTime(startTime)} – ${formatTime(endTime)}`}
+            subvalue={duration(startTime, endTime)}
+          />
+          <SummaryRow icon="person-outline" label="Student" value={studentName} subvalue={studentId} />
         </View>
-
-        <Text style={styles.label}>Booking date</Text>
-        <TextInput
-          value={date}
-          onChangeText={setDate}
-          placeholder="YYYY-MM-DD"
-          style={styles.input}
-          autoCapitalize="none"
-        />
-        <Text style={styles.help}>Format: YYYY-MM-DD</Text>
-
-        <View style={styles.timeRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>Start time</Text>
-            <TextInput
-              value={startTime}
-              onChangeText={setStartTime}
-              placeholder="09:00"
-              style={styles.input}
-              keyboardType="numbers-and-punctuation"
-            />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.label}>End time</Text>
-            <TextInput
-              value={endTime}
-              onChangeText={setEndTime}
-              placeholder="10:00"
-              style={styles.input}
-              keyboardType="numbers-and-punctuation"
-            />
-          </View>
-        </View>
-        <Text style={styles.help}>Use 24-hour time, for example 14:30.</Text>
 
         <View style={styles.notice}>
-          <Text style={styles.noticeTitle}>Before you confirm</Text>
-          <Text style={styles.noticeText}>
-            Your reservation must satisfy the library's booking rules.
-            The database must also prevent overlapping reservations.
-          </Text>
+          <Ionicons name="shield-checkmark-outline" size={21} color={C.dark} />
+          <Text style={styles.noticeText}>Please confirm your reservation details before proceeding.</Text>
         </View>
 
-        <Pressable
-          disabled={saving}
-          onPress={submit}
-          style={[styles.button, saving && { opacity: 0.65 }]}
-        >
-          {saving ? (
-            <ActivityIndicator color={C.white} />
-          ) : (
-            <Text style={styles.buttonText}>Confirm reservation →</Text>
-          )}
+        <Pressable disabled={saving} onPress={submit} style={[styles.primaryButton, saving && styles.buttonDisabled]}>
+          {saving ? <ActivityIndicator color={C.white} /> : <>
+            <Text style={styles.primaryButtonText}>Confirm Reservation</Text>
+            <Ionicons name="arrow-forward" size={19} color={C.white} />
+          </>}
+        </Pressable>
+        <Pressable disabled={saving} onPress={() => navigation.goBack()} style={styles.cancelLink}>
+          <Text style={styles.cancelLinkText}>Cancel</Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>
@@ -292,54 +236,48 @@ export default function SeatConfirmationScreen({ route, navigation }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
-  successPage: { flex: 1, padding: 22, justifyContent: 'center' },
-  successMark: { width: 86, height: 86, borderRadius: 43, backgroundColor: '#E3F8F4', alignSelf: 'center', alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
-  check: { color: C.teal, fontSize: 48, fontWeight: '800' },
-  successCard: { backgroundColor: C.white, borderWidth: 1, borderColor: C.border, borderRadius: 20, padding: 20, marginVertical: 22 },
-  successSeat: { color: C.text, fontSize: 28, fontWeight: '900', marginTop: 12 },
-  successRoom: { color: C.muted, fontSize: 14, marginTop: 6 },
-  successMeta: { color: C.text, fontSize: 13, fontWeight: '700', marginVertical: 4 },
-  eyebrow: { color: C.teal, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
-  divider: { height: 1, backgroundColor: C.border, marginVertical: 16 },
-  code: { color: C.muted, fontSize: 11, marginTop: 18 },
-  doneButton: { backgroundColor: C.white, borderWidth: 1, borderColor: C.border, borderRadius: 15, padding: 16, alignItems: 'center', marginTop: 10 },
-  doneText: { color: C.dark, fontWeight: '800' },
-  content: { padding: 22, paddingBottom: 36 },
-  center: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    padding: 24, backgroundColor: C.bg,
-  },
-  brand: { color: C.teal, fontSize: 10, fontWeight: '900', letterSpacing: 2, marginTop: 10 },
-  progress: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 24, marginBottom: 7 },
-  progressDone: { width: 30, height: 30, borderRadius: 15, backgroundColor: C.teal, alignItems: 'center', justifyContent: 'center' },
-  progressDoneText: { color: C.white, fontSize: 12, fontWeight: '800' },
-  progressCurrent: { width: 30, height: 30, borderRadius: 15, backgroundColor: C.teal, alignItems: 'center', justifyContent: 'center' },
-  progressCurrentText: { color: C.white, fontSize: 12, fontWeight: '800' },
-  progressDoneLine: { width: 38, height: 2, backgroundColor: C.teal },
-  progressCurrentLine: { width: 38, height: 2, backgroundColor: '#5CC9BE' },
-  title: { color: C.text, fontSize: 28, fontWeight: '900', marginTop: 13 },
-  subtitle: { color: C.muted, fontSize: 13, lineHeight: 20, marginTop: 8, marginBottom: 22 },
-  seatCard: {
-    backgroundColor: C.dark, borderRadius: 22, padding: 22, marginBottom: 25,
-  },
-  eyebrow: { color: '#BCE4E1', fontSize: 10, fontWeight: '800', letterSpacing: 1.5 },
-  seatNumber: { color: C.white, fontSize: 36, fontWeight: '900', marginTop: 13 },
-  room: { color: C.white, fontSize: 16, fontWeight: '700', marginTop: 6 },
-  floor: { color: '#C6E7E5', fontSize: 12, marginTop: 7 },
-  label: { color: C.text, fontSize: 13, fontWeight: '800', marginBottom: 9 },
-  input: {
-    backgroundColor: C.white, borderWidth: 1, borderColor: C.border,
-    borderRadius: 13, paddingHorizontal: 14, paddingVertical: 14,
-    color: C.text, fontSize: 15,
-  },
-  help: { color: C.muted, fontSize: 11, marginTop: 7, marginBottom: 19 },
-  timeRow: { flexDirection: 'row', gap: 12 },
-  notice: { backgroundColor: '#E4F4F1', borderRadius: 15, padding: 15, marginTop: 6, marginBottom: 23 },
-  noticeTitle: { color: C.dark, fontWeight: '800', fontSize: 13 },
-  noticeText: { color: C.dark, fontSize: 12, lineHeight: 19, marginTop: 6 },
-  button: {
-    backgroundColor: C.teal, borderRadius: 15, padding: 17,
-    alignItems: 'center', justifyContent: 'center', minHeight: 54,
-  },
-  buttonText: { color: C.white, fontSize: 14, fontWeight: '800' },
+  header: { minHeight: 58, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.bg },
+  headerButton: { width: 40, height: 40, borderRadius: 14, backgroundColor: C.white, alignItems: 'center', justifyContent: 'center' },
+  headerTitle: { color: C.text, fontSize: 16, fontWeight: '800' },
+  scrollContent: { width: '100%', maxWidth: 560, alignSelf: 'center', paddingHorizontal: 20, paddingTop: 14, paddingBottom: 28 },
+  wideContent: { maxWidth: 720 },
+  progress: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center', marginBottom: 18 },
+  step: { alignItems: 'center', minWidth: 58 },
+  stepCircle: { width: 31, height: 31, borderRadius: 16, backgroundColor: '#AEBBC1', alignItems: 'center', justifyContent: 'center' },
+  stepCurrent: { backgroundColor: C.teal },
+  stepNumber: { color: C.white, fontSize: 13, fontWeight: '800' },
+  stepLabel: { color: C.muted, fontSize: 10, marginTop: 5 },
+  stepLabelCurrent: { color: C.dark, fontWeight: '800' },
+  stepLine: { width: 48, height: 2, backgroundColor: '#D9E2E4', marginTop: 15 },
+  stepLineActive: { backgroundColor: C.teal },
+  pageTitle: { color: C.text, fontSize: 24, fontWeight: '900', letterSpacing: -0.5 },
+  subtitle: { color: C.muted, fontSize: 13, lineHeight: 19, marginTop: 5, marginBottom: 17 },
+  summaryCard: { backgroundColor: C.white, borderWidth: 1, borderColor: C.border, borderRadius: 20, paddingHorizontal: 17, paddingVertical: 8, shadowColor: '#1A3F49', shadowOpacity: 0.05, shadowRadius: 12, elevation: 2 },
+  cardTitle: { color: C.text, fontSize: 15, fontWeight: '800', paddingVertical: 9 },
+  summaryRow: { minHeight: 54, flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#F0F4F5', gap: 10 },
+  summaryIcon: { width: 27, alignItems: 'center' },
+  summaryLabel: { color: C.muted, fontSize: 12, flex: 1 },
+  summaryValueWrap: { alignItems: 'flex-end', maxWidth: '58%' },
+  summaryValue: { color: C.text, fontSize: 12, fontWeight: '700', textAlign: 'right' },
+  summarySubvalue: { color: C.muted, fontSize: 10, marginTop: 3, textAlign: 'right' },
+  notice: { minHeight: 58, marginTop: 15, marginBottom: 16, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 15, backgroundColor: '#DDF5F2', flexDirection: 'row', alignItems: 'center', gap: 10 },
+  noticeText: { flex: 1, color: C.dark, fontSize: 12, lineHeight: 18 },
+  primaryButton: { minHeight: 53, paddingHorizontal: 17, borderRadius: 15, backgroundColor: C.teal, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, shadowColor: C.dark, shadowOpacity: 0.16, shadowRadius: 8, elevation: 2 },
+  primaryButtonText: { color: C.white, fontSize: 14, fontWeight: '800' },
+  buttonDisabled: { opacity: 0.65 },
+  cancelLink: { alignItems: 'center', paddingVertical: 14 },
+  cancelLinkText: { color: C.dark, fontSize: 13, fontWeight: '600' },
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 14 },
+  successScreen: { flex: 1, justifyContent: 'center', padding: 20 },
+  successContent: { width: '100%', maxWidth: 500, alignSelf: 'center', alignItems: 'center', padding: 24, backgroundColor: C.white, borderRadius: 28, borderWidth: 1, borderColor: C.border, shadowColor: '#1A3F49', shadowOpacity: 0.07, shadowRadius: 16, elevation: 3 },
+  confettiArea: { width: 180, height: 125, alignItems: 'center', justifyContent: 'center' },
+  successMark: { width: 88, height: 88, borderRadius: 46, backgroundColor: '#18B99F', borderWidth: 8, borderColor: '#D7F5F0', alignItems: 'center', justifyContent: 'center' },
+  confetti: { position: 'absolute', width: 7, height: 7, borderRadius: 4, backgroundColor: '#4EC995' },
+  confettiOne: { top: 18, left: 15 },
+  confettiTwo: { top: 28, right: 14, backgroundColor: '#5598E9' },
+  confettiThree: { bottom: 18, left: 31, backgroundColor: '#F47C69' },
+  successTitle: { color: C.text, fontSize: 22, fontWeight: '900', textAlign: 'center', marginTop: 5 },
+  successText: { color: C.muted, fontSize: 13, textAlign: 'center', marginTop: 5 },
+  outlineButton: { width: '100%', minHeight: 49, borderWidth: 1.5, borderColor: C.teal, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  outlineButtonText: { color: C.dark, fontSize: 13, fontWeight: '800' },
 });

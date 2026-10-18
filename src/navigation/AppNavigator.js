@@ -61,7 +61,7 @@ export default function AppNavigator() {
 
         {/* Full-screen detail pages (no bottom tab bar) */}
         <Stack.Screen name="NotificationDetail" component={NotificationDetailScreen} options={{ title: 'Notification' }} />
-        <Stack.Screen name="MyReservations" component={MyReservationsScreen} options={{ title: 'Reservation History' }} />
+        <Stack.Screen name="MyReservations" component={MyReservationsScreen} options={{ headerShown: false }} />
         <Stack.Screen name="ReservationDetail" component={ReservationDetailScreen} options={{ title: 'Reservation Detail' }} />
         <Stack.Screen name="PersonalInfo" component={PersonalInfoScreen} options={{ title: 'Personal Information' }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
@@ -72,7 +72,7 @@ export default function AppNavigator() {
 
         <Stack.Screen name="SeatAvailability" component={FloorSelectionScreen} options={{ headerShown: false }} />
         <Stack.Screen name="SelectSeat" component={SelectSeatScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="SeatConfirmation" component={SeatConfirmationScreen} options={{ title: 'Confirmation', headerBackVisible: false }} />
+        <Stack.Screen name="SeatConfirmation" component={SeatConfirmationScreen} options={{ headerShown: false }} />
 
         <Stack.Screen name="SeatAllocation" component={SeatAllocationScreen} options={{ title: 'Seat Allocation' }} />
       </Stack.Navigator>

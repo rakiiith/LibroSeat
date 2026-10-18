@@ -46,7 +46,7 @@ export default function LoginScreen({ navigation }) {
       navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
     } catch (e) {
       console.warn('Student login failed:', e.message);
-      setError(e.message || 'Unable to log in. Please try again.');
+      setError(e.message || 'Incorrect email or password. Please try again.');
       runShake();
     } finally {
       setLoading(false);

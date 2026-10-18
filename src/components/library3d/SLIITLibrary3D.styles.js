@@ -1,4 +1,4 @@
-import { StyleSheet } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 
 export const COLORS = {
   navy: '#F6F9FA',
@@ -11,7 +11,16 @@ export const COLORS = {
 
 export const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.white },
-  root: { flex: 1, width: '100%', maxWidth: 560, minHeight: 560, alignSelf: 'center', backgroundColor: '#F6F9FA', overflow: 'hidden' },
+  root: {
+    flex: 1,
+    width: '100%',
+    maxWidth: Platform.OS === 'web' ? '100%' : 560,
+    minHeight: Platform.OS === 'web' ? '100vh' : 560,
+    height: Platform.OS === 'web' ? '100vh' : undefined,
+    alignSelf: 'center',
+    backgroundColor: '#F6F9FA',
+    overflow: 'hidden',
+  },
   glView: { position: 'absolute', top: 188, left: 0, backgroundColor: '#F6F9FA' },
   gestureLayer: { ...StyleSheet.absoluteFillObject, top: 188, bottom: 205, zIndex: 1, backgroundColor: 'transparent' },
   brandBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 58, zIndex: 10, backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E1E9EB', paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

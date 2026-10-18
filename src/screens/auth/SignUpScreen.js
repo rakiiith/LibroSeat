@@ -63,15 +63,15 @@ export default function SignUpScreen({ navigation }) {
     setError('');
     try {
       const result = await signUpStudent(fullName, studentId, email, password);
-      if (result.needsEmailConfirmation) {
+      if (result?.needsEmailConfirmation) {
         Alert.alert(
-          'Confirm your email',
-          'Your account was created. Open the confirmation email before logging in.',
+          'Account Created',
+          'A confirmation link has been sent to your email. Please confirm your email address, then log in.',
           [{ text: 'OK', onPress: () => navigation.navigate('Login') }],
         );
-        return;
+      } else {
+        navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
       }
-      navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
     } catch (e) {
       console.warn('Sign up failed:', e.message);
       if (e.message?.toLowerCase().includes('already registered')) {

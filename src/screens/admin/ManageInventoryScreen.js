@@ -488,7 +488,17 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
     borderWidth: 1, borderColor: colors.border
   },
-  searchInput: { flex: 1, marginLeft: spacing.sm, fontSize: 14, color: colors.text },
+  searchInput: { 
+    flex: 1, 
+    marginLeft: spacing.sm, 
+    fontSize: 14, 
+    color: colors.text,
+    borderWidth: 0,
+    outlineStyle: 'none',
+    backgroundColor: 'transparent',
+    paddingVertical: 0,
+    height: '100%',
+  },
   searchBarcodeIcon: { backgroundColor: '#F3F4F6', padding: 4, borderRadius: 4 },
   addButton: {
     width: 44, height: 44, backgroundColor: colors.primary,

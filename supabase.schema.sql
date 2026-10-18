@@ -45,7 +45,7 @@ set
   total_copies = coalesce(
     total_copies,
     case
-      when coalesce(is_available, status = 'available', false)
+      when coalesce(is_available, false)
       then 1
       else 0
     end
@@ -54,7 +54,7 @@ set
   available_copies = coalesce(
     available_copies,
     case
-      when coalesce(is_available, status = 'available', false)
+      when coalesce(is_available, false)
       then 1
       else 0
     end
@@ -74,12 +74,6 @@ set
 
 update public.books
 set
-  status = case
-    when coalesce(available_copies, 0) > 0
-    then 'available'
-    else 'unavailable'
-  end,
-
   is_available = coalesce(available_copies, 0) > 0;
 
 
@@ -820,10 +814,12 @@ create policy "Staff manage all notifications"
 -- ============================================================
 
 -- A. Update the existing seats table to match the new requirements
-ALTER TABLE public.seats RENAME COLUMN room TO zone;
-ALTER TABLE public.seats RENAME COLUMN is_available TO is_blocked;
-ALTER TABLE public.seats ALTER COLUMN is_blocked SET DEFAULT false;
-UPDATE public.seats SET is_blocked = false;
+-- Safely add 'zone' column if it doesn't exist (avoid RENAME which fails if column is missing)
+ALTER TABLE public.seats ADD COLUMN IF NOT EXISTS zone text;
+-- Safely add 'is_blocked' column if it doesn't exist
+ALTER TABLE public.seats ADD COLUMN IF NOT EXISTS is_blocked boolean NOT NULL DEFAULT false;
+UPDATE public.seats SET is_blocked = false WHERE is_blocked IS NULL;
+ALTER TABLE public.seats DROP CONSTRAINT IF EXISTS unique_seat_number;
 ALTER TABLE public.seats ADD CONSTRAINT unique_seat_number UNIQUE (seat_number);
 
 -- B. Create a dedicated seat_reservations table (separate from books to avoid breaking existing book features)
@@ -842,10 +838,18 @@ CREATE TABLE IF NOT EXISTS public.seat_reservations (
 ALTER TABLE public.seat_reservations ENABLE ROW LEVEL SECURITY;
 
 -- C. Row Level Security Policies for seat_reservations
+DROP POLICY IF EXISTS "Students read all seat reservations" ON public.seat_reservations;
 CREATE POLICY "Students read all seat reservations" ON public.seat_reservations FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Students create own seat reservations" ON public.seat_reservations;
 CREATE POLICY "Students create own seat reservations" ON public.seat_reservations FOR INSERT TO authenticated WITH CHECK (auth.uid() = student_id);
+
+DROP POLICY IF EXISTS "Students cancel own seat reservations" ON public.seat_reservations;
 CREATE POLICY "Students cancel own seat reservations" ON public.seat_reservations FOR UPDATE TO authenticated USING (auth.uid() = student_id) WITH CHECK (auth.uid() = student_id);
+
+DROP POLICY IF EXISTS "Staff manage all seat reservations" ON public.seat_reservations;
 CREATE POLICY "Staff manage all seat reservations" ON public.seat_reservations FOR ALL TO authenticated 
   USING (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'staff'))
   WITH CHECK (EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'staff'));
 
+commit;

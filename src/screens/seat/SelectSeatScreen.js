@@ -197,9 +197,7 @@ export default function SelectSeatScreen({ navigation, route }) {
     const validation = validateTimeRange(draftTime, bookingDate);
     setTimeError(validation);
     if (validation) return;
-    const changed = draftTime.start !== timeSlot.start || draftTime.end !== timeSlot.end;
     setTimeSlot(makeTimeRange(draftTime.start, draftTime.end));
-    if (changed) setSelected(null);
     setActivePicker(null);
   };
 
@@ -255,6 +253,12 @@ export default function SelectSeatScreen({ navigation, route }) {
 
   const continueBooking = () => {
     if (!selected) return;
+    if (selectedTimeError) {
+      setDraftTime({ ...timeSlot });
+      setTimeError(selectedTimeError);
+      setActivePicker('time');
+      return;
+    }
     navigation.navigate('SeatConfirmation', {
       seat: selected,
       room: selected.reading_rooms?.name,
@@ -380,14 +384,17 @@ export default function SelectSeatScreen({ navigation, route }) {
       <View style={styles.bottomAction}>
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: !selected || loading || !!error || !!selectedTimeError }}
-          disabled={!selected || loading || !!error || !!selectedTimeError}
+          accessibilityState={{ disabled: !selected || loading || !!error }}
+          disabled={!selected || loading || !!error}
           onPress={continueBooking}
-          style={({ pressed }) => [styles.continueButton, (!selected || loading || !!error || !!selectedTimeError) && styles.continueDisabled, pressed && styles.continuePressed]}
+          style={({ pressed }) => [styles.continueButton, (!selected || loading || !!error) && styles.continueDisabled, pressed && styles.continuePressed]}
         >
-          <Text style={styles.continueText}>Continue with Selected Seat</Text>
+          <Text style={styles.continueText}>{selectedTimeError ? 'Choose a Valid Time to Continue' : 'Continue with Selected Seat'}</Text>
           <Ionicons name="arrow-forward" size={19} color={C.white} />
         </Pressable>
+        {!!selected && !!selectedTimeError && (
+          <Text style={styles.timeNotice}>This booking time has passed. Tap above to choose a new time.</Text>
+        )}
       </View>
 
       <View style={[styles.bottomTabs, { paddingBottom: Math.max(insets.bottom, 8) }]}>
@@ -404,7 +411,6 @@ export default function SelectSeatScreen({ navigation, route }) {
         onClose={() => setActivePicker(null)}
         onSelect={date => {
           setBookingDate(date);
-          setSelected(null);
           setActivePicker(null);
         }}
       />
@@ -775,12 +781,13 @@ const styles = StyleSheet.create({
   continueDisabled: { backgroundColor: '#8CBDBE' },
   continuePressed: { opacity: 0.86 },
   continueText: { color: C.white, fontSize: 14, fontWeight: '800' },
+  timeNotice: { color: C.muted, fontSize: 10, lineHeight: 14, textAlign: 'center', marginTop: 7 },
   bottomTabs: { width: '100%', maxWidth: 560, alignSelf: 'center', minHeight: 58, paddingTop: 7, backgroundColor: C.white, borderTopWidth: 1, borderTopColor: C.border, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' },
   bottomTab: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2 },
   bottomTabLabel: { color: C.muted, fontSize: 10, fontWeight: '600' },
   bottomTabLabelActive: { color: C.teal, fontWeight: '800' },
   modalRoot: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(17,39,46,0.32)' },
-  modalCard: { width: '100%', maxWidth: 560, maxHeight: '78%', alignSelf: 'center', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 22, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: C.white },
+  modalCard: { width: '100%', maxWidth: 560, maxHeight: '90%', alignSelf: 'center', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 18, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: C.white, overflow: 'hidden' },
   modalHandle: { width: 38, height: 4, borderRadius: 2, backgroundColor: '#CBD5D8', alignSelf: 'center', marginBottom: 15 },
   modalHeader: { minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   modalTitle: { color: C.dark, fontSize: 16, fontWeight: '800' },
@@ -799,6 +806,31 @@ const styles = StyleSheet.create({
   calendarDayTextDisabled: { color: C.faint },
   calendarSelected: { color: C.muted, fontSize: 12, fontWeight: '600', textAlign: 'center', marginTop: 12 },
   modalClose: { width: 32, height: 32, borderRadius: 11, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' },
+  timeFieldCard: { marginBottom: 8 },
+  timeFieldLabel: { color: C.dark, fontSize: 11, fontWeight: '700', marginBottom: 5 },
+  timeSelectButton: { minHeight: 43, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: C.border, backgroundColor: '#FBFDFD', flexDirection: 'row', alignItems: 'center', gap: 9 },
+  timeSelectButtonActive: { borderColor: C.teal, backgroundColor: C.pale },
+  timeSelectValue: { color: C.dark, fontSize: 14, fontWeight: '800' },
+  timeSelectHint: { marginLeft: 'auto', color: C.muted, fontSize: 10 },
+  wheelPicker: { marginTop: 3, padding: 11, borderRadius: 15, backgroundColor: '#F6F9FA', borderWidth: 1, borderColor: C.border },
+  wheelTitle: { color: C.dark, fontSize: 11, fontWeight: '700', marginBottom: 8 },
+  wheelColumns: { flexDirection: 'row', gap: 10 },
+  wheelColumn: { flex: 1, minWidth: 0 },
+  wheelColumnTitle: { color: C.muted, fontSize: 10, fontWeight: '700', marginBottom: 5 },
+  wheelList: { height: 116, flexGrow: 0, borderRadius: 10, backgroundColor: C.white, borderWidth: 1, borderColor: C.border },
+  wheelOption: { minHeight: 30, alignItems: 'center', justifyContent: 'center', marginHorizontal: 4, marginVertical: 2, borderRadius: 7 },
+  wheelOptionSelected: { backgroundColor: C.teal },
+  wheelOptionDisabled: { opacity: 0.28 },
+  wheelOptionText: { color: C.dark, fontSize: 12, fontWeight: '600' },
+  wheelOptionTextSelected: { color: C.white, fontWeight: '800' },
+  nativePickerWrap: { alignItems: 'center', paddingVertical: 5 },
+  durationCard: { minHeight: 54, paddingHorizontal: 13, marginTop: 10, borderRadius: 12, backgroundColor: C.pale, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  durationLabel: { color: C.muted, fontSize: 9, fontWeight: '700' },
+  durationValue: { color: C.dark, fontSize: 13, fontWeight: '800', marginTop: 2 },
+  timeValidation: { color: '#A9363F', fontSize: 11, lineHeight: 15, marginTop: 8, marginBottom: 2 },
+  confirmTimeButton: { minHeight: 47, marginTop: 10, paddingHorizontal: 15, borderRadius: 12, backgroundColor: C.teal, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  confirmTimeDisabled: { backgroundColor: '#9CBDBD' },
+  confirmTimeText: { color: C.white, fontSize: 12, fontWeight: '800' },
   pickerList: { flexGrow: 0 },
   pickerOption: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: 11, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border },
   pickerIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: C.pale },

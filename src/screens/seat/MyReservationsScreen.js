@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Pressable,
   SafeAreaView,
   StatusBar,
@@ -10,121 +11,93 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { supabase } from '../../supabase/supabaseConfig';
-import { normalizeSeat } from './seatData';
-
-async function getCurrentUser() {
-  const { data, error } = await supabase.auth.getUser();
-  if (error) throw error;
-  if (!data?.user) throw new Error('Please sign in to manage seat reservations.');
-  return data.user;
-}
-
-function normalizeReservation(row) {
-  const { seats, student_id, reservation_date, ...rest } = row;
-  return {
-    ...rest,
-    user_id: student_id,
-    booking_date: reservation_date,
-    status: row.status === 'reserved' || row.status === 'checked_in' ? 'confirmed' : row.status,
-    library_seats: seats ? normalizeSeat(seats) : null,
-  };
-}
-
-async function fetchMySeatReservations(userId) {
-  const { data, error } = await supabase
-    .from('seat_reservations')
-    .select(`id, seat_id, student_id, reservation_date, start_time, end_time, status,
-      seats (*)`)
-    .eq('student_id', userId)
-    .order('reservation_date', { ascending: true })
-    .order('start_time', { ascending: true });
-  if (error) throw error;
-  return (data ?? []).map(normalizeReservation);
-}
-
-async function cancelSeatReservation(reservationId, userId) {
-  const { data, error } = await supabase
-    .from('seat_reservations')
-    .update({ status: 'cancelled' })
-    .eq('id', reservationId)
-    .eq('student_id', userId)
-    .eq('status', 'reserved')
-    .select('id')
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) throw new Error('This reservation is no longer eligible for cancellation. Refresh and try again.');
-  return data;
-}
-
-function subscribeToSeatReservations(onChange, userId) {
-  const channel = supabase
-    .channel(`seat-reservations-${userId}`)
-    .on('postgres_changes', {
-      event: '*', schema: 'public', table: 'seat_reservations', filter: `student_id=eq.${userId}`,
-    }, onChange)
-    .subscribe();
-  return () => supabase.removeChannel(channel);
-}
+import {
+  cancelSeatReservation,
+  checkInSeatReservation,
+  fetchMySeatReservations,
+  getCurrentUser,
+  subscribeToSeatReservations,
+} from './seatReservationService';
 
 const C = {
-  bg: '#F4F7F8', white: '#FFFFFF', teal: '#0F8B8D', dark: '#08696C',
-  text: '#18323B', muted: '#71838A', faint: '#91A0A8', border: '#DFE8EA',
-  pale: '#E3F5F1', emerald: '#23865B', greenBg: '#E5F6EC',
-  amber: '#A96B00', amberBg: '#FFF4DD', rose: '#B94048', roseBg: '#FDEBEC',
+  bg: '#F4F8F9', white: '#FFFFFF', teal: '#0F9292', dark: '#0A686B',
+  text: '#18323B', muted: '#74868E', faint: '#9BA9AE', border: '#E2EBED',
+  pale: '#E7F7F5', green: '#168957', greenBg: '#DDF6E9', rose: '#C94C55', roseBg: '#FDEBEC',
 };
+
+const AREA_IMAGES = [
+  require('../../assets/library3d/study-front.jpg'),
+  require('../../assets/library3d/library-overview.jpg'),
+  require('../../assets/library3d/group-study.jpg'),
+];
 
 const dateKey = (date = new Date()) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
-function displayDate(value) {
+function displayDate(value, options = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) {
   if (!value) return 'Date not set';
   const parsed = new Date(`${value}T00:00:00`);
-  return Number.isNaN(parsed.getTime())
-    ? String(value)
-    : parsed.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleDateString(undefined, options);
 }
 
 function displayTime(value) {
   return value ? String(value).slice(0, 5) : '—';
 }
 
-function currentTimeString() {
-  const now = new Date();
-  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-}
-
 function isUpcoming(item) {
   const status = String(item.status || '').toLowerCase();
-  if (status !== 'confirmed' && status !== 'pending') return false;
-  const today = dateKey();
-  if (item.booking_date > today) return true;
-  return item.booking_date === today && displayTime(item.end_time) >= currentTimeString();
+  if (!['confirmed', 'pending', 'reserved', 'checked_in'].includes(status)) return false;
+  const date = item.reservation_date || item.booking_date;
+  return date > dateKey() || (date === dateKey() && displayTime(item.end_time) >= displayTime(new Date().toTimeString()));
 }
 
 function canCancel(item) {
-  return String(item.status || '').toLowerCase() === 'confirmed' && (
-    item.booking_date > dateKey() ||
-    (item.booking_date === dateKey() && displayTime(item.start_time) > currentTimeString())
+  const status = String(item.status || '').toLowerCase();
+  const date = item.reservation_date || item.booking_date;
+  const now = new Date();
+  const timeNow = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  return ['confirmed', 'reserved'].includes(status)
+    && (date > dateKey() || (date === dateKey() && displayTime(item.start_time) > timeNow));
+}
+
+function checkInState(item) {
+  const status = String(item.status || '').toLowerCase();
+  if (status === 'checked_in') return { checked: true, label: 'Checked in' };
+  if (!['reserved', 'confirmed'].includes(status)) return { canCheckIn: false };
+  const date = item.reservation_date || item.booking_date;
+  const start = new Date(`${date}T${displayTime(item.start_time)}:00`);
+  const end = new Date(`${date}T${displayTime(item.end_time)}:00`);
+  const now = new Date();
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return { canCheckIn: false };
+  if (now < new Date(start.getTime() - 15 * 60 * 1000)) return { canCheckIn: false, label: 'Check-in opens 15 min before' };
+  return { canCheckIn: now <= end, label: now <= end ? 'Check in now' : 'Reservation ended' };
+}
+
+function statusInfo(item) {
+  if (isUpcoming(item)) return { label: item.status === 'checked_in' ? 'Checked in' : 'Upcoming', color: C.green, bg: C.greenBg };
+  if (String(item.status).toLowerCase() === 'cancelled') return { label: 'Cancelled', color: C.rose, bg: C.roseBg };
+  return { label: 'Past', color: C.muted, bg: '#E9EEF0' };
+}
+
+function BottomTab({ icon, label, active, onPress }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={styles.bottomTab}>
+      <Ionicons name={icon} size={21} color={active ? C.dark : C.muted} />
+      <Text style={[styles.bottomTabText, active && styles.bottomTabTextActive]}>{label}</Text>
+    </Pressable>
   );
 }
 
-function statusTone(status) {
-  switch (String(status || '').toLowerCase()) {
-    case 'confirmed': return { text: C.emerald, bg: C.greenBg, icon: 'checkmark-circle' };
-    case 'cancelled': return { text: C.rose, bg: C.roseBg, icon: 'close-circle' };
-    default: return { text: C.amber, bg: C.amberBg, icon: 'time' };
-  }
-}
-
 export default function MyReservationsScreen({ navigation }) {
+  const { width } = useWindowDimensions();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -134,16 +107,16 @@ export default function MyReservationsScreen({ navigation }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
+  const wide = width > 760;
 
   const load = useCallback(async (userId, refresh = false) => {
     if (refresh) setRefreshing(true);
     else setLoading(true);
     setError('');
     try {
-      const reservations = await fetchMySeatReservations(userId);
-      setItems(reservations);
-    } catch (e) {
-      setError(e.message || 'Unable to load reservations.');
+      setItems(await fetchMySeatReservations(userId));
+    } catch (loadError) {
+      setError(loadError.message || 'Unable to load reservations.');
     } finally {
       if (refresh) setRefreshing(false);
       else setLoading(false);
@@ -159,26 +132,23 @@ export default function MyReservationsScreen({ navigation }) {
         if (!active) return;
         unsubscribe = subscribeToSeatReservations(() => load(user.id, true), user.id);
         await load(user.id);
-      } catch (e) {
+      } catch (loadError) {
         if (active) {
-          setError(e.message || 'Unable to load reservations.');
+          setError(loadError.message || 'Unable to load reservations.');
           setLoading(false);
         }
       }
     };
     start();
-    return () => {
-      active = false;
-      unsubscribe?.();
-    };
+    return () => { active = false; unsubscribe?.(); };
   }, [load]));
 
-  const refreshReservations = useCallback(async () => {
+  const refresh = useCallback(async () => {
     try {
       const user = await getCurrentUser();
       await load(user.id, true);
-    } catch (e) {
-      setError(e.message || 'Unable to refresh reservations.');
+    } catch (loadError) {
+      setError(loadError.message || 'Unable to refresh reservations.');
       setRefreshing(false);
     }
   }, [load]);
@@ -189,35 +159,38 @@ export default function MyReservationsScreen({ navigation }) {
     return items.filter(item => {
       const active = isUpcoming(item);
       const matchesTab = tab === 'Upcoming' ? active : !active;
-      const seat = item.library_seats?.seat_number ?? item.seat_id ?? '';
-      const room = item.library_seats?.reading_rooms?.name ?? '';
-      const haystack = `${seat} ${room} ${item.booking_date} ${item.status}`.toLowerCase();
-      return matchesTab && (!query || haystack.includes(query));
-    }).sort((left, right) => {
-      const a = `${left.booking_date} ${displayTime(left.start_time)}`;
-      const b = `${right.booking_date} ${displayTime(right.start_time)}`;
-      return tab === 'Upcoming' ? a.localeCompare(b) : b.localeCompare(a);
+      const seat = item.seats?.seat_number ?? item.seat_id ?? '';
+      const room = item.seats?.zone ?? 'Main Library';
+      const date = item.reservation_date || item.booking_date || '';
+      return matchesTab && (!query || `${seat} ${room} ${date} ${item.status}`.toLowerCase().includes(query));
+    }).sort((a, b) => {
+      const aDate = `${a.reservation_date || a.booking_date} ${displayTime(a.start_time)}`;
+      const bDate = `${b.reservation_date || b.booking_date} ${displayTime(b.start_time)}`;
+      return tab === 'Upcoming' ? aDate.localeCompare(bDate) : bDate.localeCompare(aDate);
     });
   }, [items, search, tab]);
 
-  const cancel = (item) => {
+  const runAction = (item, action) => {
+    const seat = item.seats?.seat_number ?? item.seat_id;
+    const isCancel = action === 'cancel';
     Alert.alert(
-      'Cancel reservation?',
-      `Seat ${item.library_seats?.seat_number ?? item.seat_id} · ${displayDate(item.booking_date)}`,
+      isCancel ? 'Cancel reservation?' : 'Check in to your seat?',
+      isCancel ? `Seat ${seat} · ${displayDate(item.reservation_date || item.booking_date)}` : `Confirm your arrival at seat ${seat}.`,
       [
-        { text: 'Keep booking', style: 'cancel' },
+        { text: 'Keep', style: 'cancel' },
         {
-          text: 'Confirm cancel', style: 'destructive',
+          text: isCancel ? 'Cancel booking' : 'Check in',
+          style: isCancel ? 'destructive' : 'default',
           onPress: async () => {
             setBusyId(item.id);
             try {
               const user = await getCurrentUser();
-              await cancelSeatReservation(item.id, user.id);
+              if (isCancel) await cancelSeatReservation(item.id, user.id);
+              else await checkInSeatReservation(item.id, user.id);
               setSelected(null);
               await load(user.id, true);
-              Alert.alert('Reservation cancelled', 'Your seat is now available to other members.');
-            } catch (e) {
-              Alert.alert('Could not cancel', e.message || 'Please try again.');
+            } catch (actionError) {
+              Alert.alert(isCancel ? 'Could not cancel' : 'Check-in failed', actionError.message || 'Please try again.');
             } finally {
               setBusyId(null);
             }
@@ -227,209 +200,211 @@ export default function MyReservationsScreen({ navigation }) {
     );
   };
 
-  const renderItem = ({ item }) => {
-    const seat = item.library_seats?.seat_number ?? item.seat_id;
-    const room = item.library_seats?.reading_rooms?.name ?? 'Reading room';
-    const status = statusTone(item.status);
-    const active = isUpcoming(item);
+  const renderItem = ({ item, index }) => {
+    const seat = item.seats?.seat_number ?? item.seat_id ?? '—';
+    const room = item.seats?.zone || 'Main Library';
+    const date = item.reservation_date || item.booking_date;
+    const status = statusInfo(item);
+    const checkIn = checkInState(item);
+    const mayCancel = canCancel(item);
     return (
-      <Pressable onPress={() => setSelected(item)} style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
-        <View style={styles.cardTop}>
-          <View style={styles.seatBadge}>
-            <Text style={styles.seatEyebrow}>SEAT</Text>
-            <Text style={styles.seatNumber}>{seat}</Text>
+      <View style={styles.card}>
+        <View style={styles.cardMain}>
+          <View style={styles.cardDetails}>
+            <View style={styles.cardHeading}>
+              <View style={styles.seatHeading}>
+                <Ionicons name="tablet-portrait" size={19} color={C.teal} />
+                <Text style={styles.seatNumber}>{seat}</Text>
+              </View>
+              <View style={[styles.statusPill, { backgroundColor: status.bg }]}>
+                <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
+              </View>
+            </View>
+            <View style={styles.detailLine}><Ionicons name="calendar-outline" size={16} color={C.muted} /><Text style={styles.detailText}>{displayDate(date)}</Text></View>
+            <View style={styles.detailLine}><Ionicons name="time-outline" size={16} color={C.muted} /><Text style={styles.detailText}>{displayTime(item.start_time)} – {displayTime(item.end_time)}</Text></View>
+            <View style={styles.detailLine}><Ionicons name="location-outline" size={16} color={C.muted} /><Text numberOfLines={1} style={styles.detailText}>{room}</Text></View>
           </View>
-          <View style={styles.cardHeading}>
-            <Text numberOfLines={1} style={styles.roomName}>{room}</Text>
-            <Text style={styles.metaLine}>
-              <Ionicons name="time-outline" size={12} color={C.amber} />{' '}
-              {displayTime(item.start_time)} – {displayTime(item.end_time)}
-              {item.library_seats?.seat_type ? `  ·  ${item.library_seats.seat_type}` : ''}
-            </Text>
-          </View>
-          <View style={[styles.statusPill, { backgroundColor: status.bg }]}>
-            <Ionicons name={status.icon} size={12} color={status.text} />
-            <Text style={[styles.statusText, { color: status.text }]}>{item.status || 'Pending'}</Text>
-          </View>
+          <Image source={AREA_IMAGES[index % AREA_IMAGES.length]} style={styles.cardImage} resizeMode="cover" />
         </View>
-
-        <View style={styles.dateStrip}>
-          <View style={styles.dateTextWrap}>
-            <Ionicons name="calendar-outline" size={15} color={C.amber} />
-            <Text style={styles.dateText}>{displayDate(item.booking_date)}</Text>
-          </View>
-          {active ? (
-            <View style={styles.activeLabel}><View style={styles.liveDot} /><Text style={styles.activeLabelText}>ACTIVE PASS</Text></View>
-          ) : (
-            <Text style={styles.expiredText}>{String(item.status).toLowerCase() === 'cancelled' ? 'CANCELLED' : 'PAST PASS'}</Text>
-          )}
-        </View>
-
-        <View style={styles.actions}>
-          <Pressable onPress={() => setSelected(item)} style={styles.passButton}>
-            <Ionicons name="ticket-outline" size={16} color={C.amber} />
-            <Text style={styles.passButtonText}>Reservation details</Text>
+        <View style={styles.cardActions}>
+          <Pressable onPress={() => setSelected(item)} style={styles.detailsButton}>
+            <Text style={styles.detailsButtonText}>View Details</Text>
           </Pressable>
-          {canCancel(item) && (
-            <Pressable disabled={busyId === item.id} onPress={() => cancel(item)} style={styles.cancelButton}>
-              {busyId === item.id ? <ActivityIndicator size="small" color={C.rose} /> : <>
-                <Ionicons name="close" size={15} color={C.rose} />
-                <Text style={styles.cancelText}>Cancel</Text>
-              </>}
+          {mayCancel ? (
+            <Pressable disabled={busyId === item.id} onPress={() => runAction(item, 'cancel')} style={styles.cancelButton}>
+              {busyId === item.id ? <ActivityIndicator size="small" color={C.rose} /> : <Text style={styles.cancelButtonText}>Cancel</Text>}
             </Pressable>
+          ) : checkIn.canCheckIn ? (
+            <Pressable disabled={busyId === item.id} onPress={() => runAction(item, 'checkin')} style={styles.checkInButton}>
+              <Text style={styles.checkInButtonText}>Check In</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.actionHint}><Text style={styles.actionHintText}>{checkIn.checked ? 'Checked in' : ''}</Text></View>
           )}
         </View>
-      </Pressable>
+      </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
-      <View style={styles.header}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => navigation?.canGoBack?.() ? navigation.goBack() : navigation?.navigate?.('Home')} style={styles.headerButton}>
-          <Ionicons name="arrow-back" size={18} color={C.white} />
+      <View style={[styles.header, wide && styles.wideHeader]}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => navigation?.canGoBack?.() ? navigation.goBack() : navigation.navigate('Home')} style={styles.headerButton}>
+          <Ionicons name="arrow-back" size={19} color={C.text} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
-          <Text style={styles.title}>My Reservations</Text>
-          <View style={styles.activeCount}><View style={styles.liveDot} /><Text style={styles.activeCountText}>{upcomingCount} Active {upcomingCount === 1 ? 'Pass' : 'Passes'}</Text></View>
+          <Text style={styles.headerTitle}>My Reservations</Text>
+          <Text style={styles.headerSubtitle}>{upcomingCount} upcoming {upcomingCount === 1 ? 'reservation' : 'reservations'}</Text>
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Search reservations" onPress={() => { setSearchOpen(v => !v); setSearch(''); }} style={styles.headerButton}>
-          <Ionicons name={searchOpen ? 'close' : 'search'} size={18} color={C.white} />
+        <Pressable accessibilityRole="button" accessibilityLabel="Search reservations" onPress={() => { setSearchOpen(value => !value); setSearch(''); }} style={styles.headerButton}>
+          <Ionicons name={searchOpen ? 'close' : 'search'} size={19} color={C.text} />
         </Pressable>
       </View>
 
       {searchOpen && (
-        <View style={styles.searchWrap}>
-          <Ionicons name="search" size={16} color={C.muted} />
-          <TextInput value={search} onChangeText={setSearch} placeholder="Search seat, room, or date..." placeholderTextColor={C.faint} style={styles.searchInput} autoFocus />
+        <View style={[styles.searchWrap, wide && styles.wideContent]}>
+          <Ionicons name="search" size={17} color={C.muted} />
+          <TextInput value={search} onChangeText={setSearch} placeholder="Search seat, room, or date" placeholderTextColor={C.faint} style={styles.searchInput} autoFocus />
         </View>
       )}
 
-      <View style={styles.tabs}>
+      <View style={[styles.tabs, wide && styles.wideContent]}>
         {['Upcoming', 'History'].map(value => {
           const active = tab === value;
+          const count = value === 'Upcoming' ? upcomingCount : items.length - upcomingCount;
           return (
             <Pressable key={value} onPress={() => setTab(value)} style={[styles.tab, active && styles.tabActive]}>
-              <Ionicons name={value === 'Upcoming' ? 'flash' : 'time'} size={14} color={active ? C.white : C.muted} />
               <Text style={[styles.tabText, active && styles.tabTextActive]}>{value}</Text>
-              {value === 'Upcoming' && <Text style={[styles.countBadge, active && styles.countBadgeActive]}>{upcomingCount}</Text>}
+              <Text style={[styles.tabCount, active && styles.tabCountActive]}>{count}</Text>
             </Pressable>
           );
         })}
       </View>
 
       {loading ? (
-        <View style={styles.center}><ActivityIndicator size="large" color={C.amber} /><Text style={styles.helper}>Loading your passes...</Text></View>
+        <View style={styles.center}><ActivityIndicator size="large" color={C.teal} /><Text style={styles.helper}>Loading your reservations…</Text></View>
       ) : error ? (
-        <View style={styles.center}><Ionicons name="cloud-offline-outline" size={34} color={C.rose} /><Text style={styles.error}>{error}</Text><Pressable onPress={refreshReservations} style={styles.retry}><Text style={styles.retryText}>Try again</Text></Pressable></View>
+        <View style={styles.center}>
+          <Ionicons name="cloud-offline-outline" size={34} color={C.rose} />
+          <Text style={styles.errorText}>{error}</Text>
+          <Pressable onPress={refresh} style={styles.retryButton}><Text style={styles.retryText}>Try again</Text></Pressable>
+        </View>
       ) : (
         <FlatList
           data={visibleItems}
           keyExtractor={item => String(item.id)}
           renderItem={renderItem}
-          onRefresh={refreshReservations}
+          onRefresh={refresh}
           refreshing={refreshing}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, wide && styles.wideContent, !visibleItems.length && styles.listEmpty]}
           showsVerticalScrollIndicator={false}
-          ListEmptyComponent={<View style={styles.empty}><View style={styles.emptyIcon}><Ionicons name={tab === 'Upcoming' ? 'ticket-outline' : 'time-outline'} size={25} color={C.amber} /></View><Text style={styles.emptyTitle}>{search ? 'No matching reservations' : tab === 'Upcoming' ? 'No upcoming passes' : 'No reservation history'}</Text><Text style={styles.helper}>{search ? 'Try a different seat, room, or date.' : 'Your seat bookings will show up here.'}</Text></View>}
+          ListEmptyComponent={(
+            <View style={styles.emptyState}>
+              <View style={styles.emptyIcon}><Ionicons name={tab === 'Upcoming' ? 'calendar-outline' : 'time-outline'} size={25} color={C.teal} /></View>
+              <Text style={styles.emptyTitle}>{search ? 'No matching reservations' : tab === 'Upcoming' ? 'No upcoming reservations' : 'No reservation history'}</Text>
+              <Text style={styles.helper}>{search ? 'Try another seat, room, or date.' : 'Your seat bookings will appear here.'}</Text>
+            </View>
+          )}
         />
       )}
 
-      {selected && <View style={styles.modalOverlay}>
-        <Pressable accessibilityLabel="Close reservation details" onPress={() => setSelected(null)} style={StyleSheet.absoluteFill} />
-        <View style={styles.detailSheet}>
-          <View style={styles.sheetHandle} />
-          <View style={styles.sheetHeader}>
-            <View style={styles.sheetIcon}><Ionicons name="ticket" size={17} color={C.amber} /></View>
-            <View style={{ flex: 1 }}><Text style={styles.sheetEyebrow}>RESERVATION DETAILS</Text><Text style={styles.sheetId}>#{String(selected.id).slice(0, 8).toUpperCase()}</Text></View>
-            <Pressable onPress={() => setSelected(null)} style={styles.closeButton}><Ionicons name="close" size={19} color={C.muted} /></Pressable>
+      {selected && (
+        <View style={styles.modalOverlay}>
+          <Pressable accessibilityLabel="Close reservation details" onPress={() => setSelected(null)} style={StyleSheet.absoluteFill} />
+          <View style={[styles.detailSheet, wide && styles.wideSheet]}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <View style={styles.sheetIcon}><Ionicons name="ticket-outline" size={19} color={C.teal} /></View>
+              <View style={{ flex: 1 }}><Text style={styles.sheetTitle}>Reservation Details</Text><Text style={styles.sheetId}>#{String(selected.id).slice(0, 8).toUpperCase()}</Text></View>
+              <Pressable onPress={() => setSelected(null)} style={styles.closeButton}><Ionicons name="close" size={19} color={C.muted} /></Pressable>
+            </View>
+            <Text style={styles.sheetSeat}>Seat {selected.seats?.seat_number ?? selected.seat_id}</Text>
+            <View style={styles.detailLine}><Ionicons name="location-outline" size={17} color={C.muted} /><Text style={styles.detailText}>{selected.seats?.zone || 'Main Library'}</Text></View>
+            <View style={styles.detailLine}><Ionicons name="calendar-outline" size={17} color={C.muted} /><Text style={styles.detailText}>{displayDate(selected.reservation_date || selected.booking_date)}</Text></View>
+            <View style={styles.detailLine}><Ionicons name="time-outline" size={17} color={C.muted} /><Text style={styles.detailText}>{displayTime(selected.start_time)} – {displayTime(selected.end_time)}</Text></View>
+            {checkInState(selected).canCheckIn && <Pressable onPress={() => runAction(selected, 'checkin')} style={styles.sheetPrimary}><Text style={styles.sheetPrimaryText}>Check In Now</Text></Pressable>}
+            {canCancel(selected) && <Pressable onPress={() => runAction(selected, 'cancel')} style={styles.sheetCancel}><Text style={styles.cancelButtonText}>Cancel reservation</Text></Pressable>}
+            <Pressable onPress={() => setSelected(null)} style={styles.sheetDone}><Text style={styles.sheetDoneText}>Done</Text></Pressable>
           </View>
-          <View style={styles.detailHero}>
-            <Text style={styles.detailLabel}>ASSIGNED SEAT</Text>
-            <Text style={styles.detailSeat}>Seat {selected.library_seats?.seat_number ?? selected.seat_id}</Text>
-            <Text style={styles.detailRoom}>{selected.library_seats?.reading_rooms?.name ?? 'Reading room'}{selected.library_seats?.reading_rooms?.floor ? ` · Floor ${selected.library_seats.reading_rooms.floor}` : ''}</Text>
-          </View>
-          <View style={styles.detailGrid}>
-            <View style={styles.detailCell}><Text style={styles.detailLabel}>DATE</Text><Text style={styles.detailValue}>{displayDate(selected.booking_date)}</Text></View>
-            <View style={styles.detailCell}><Text style={styles.detailLabel}>TIME SLOT</Text><Text style={styles.detailValue}>{displayTime(selected.start_time)} – {displayTime(selected.end_time)}</Text></View>
-          </View>
-          <View style={styles.modalStatusRow}><Text style={styles.detailLabel}>BOOKING STATUS</Text><View style={[styles.statusPill, { backgroundColor: statusTone(selected.status).bg }]}><Text style={[styles.statusText, { color: statusTone(selected.status).text }]}>{selected.status || 'Pending'}</Text></View></View>
-          {canCancel(selected) && <Pressable onPress={() => cancel(selected)} style={styles.modalCancel}><Text style={styles.modalCancelText}>Cancel reservation</Text></Pressable>}
-          <Pressable onPress={() => setSelected(null)} style={styles.doneButton}><Text style={styles.doneText}>Done</Text></Pressable>
         </View>
-      </View>}
+      )}
+
+      <View style={styles.bottomTabs}>
+        <BottomTab icon="home-outline" label="Home" onPress={() => navigation.navigate('Home', { screen: 'HomeTab' })} />
+        <BottomTab icon="grid-outline" label="Seats" onPress={() => navigation.navigate('SeatAvailability')} />
+        <BottomTab icon="calendar" label="Bookings" active onPress={() => {}} />
+        <BottomTab icon="person-outline" label="Account" onPress={() => navigation.navigate('Home', { screen: 'Profile' })} />
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
-  header: { minHeight: 72, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 10 },
-  headerButton: { width: 42, height: 42, borderRadius: 15, borderWidth: 1, borderColor: C.border, backgroundColor: C.white, alignItems: 'center', justifyContent: 'center' },
+  header: { minHeight: 67, width: '100%', paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  wideHeader: { maxWidth: 900, alignSelf: 'center' },
+  headerButton: { width: 40, height: 40, borderRadius: 14, backgroundColor: C.white, alignItems: 'center', justifyContent: 'center' },
   headerTitleWrap: { alignItems: 'center' },
-  title: { color: C.text, fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
-  activeCount: { flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6 },
-  activeCountText: { color: C.dark, fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.emerald },
-  searchWrap: { minHeight: 48, marginHorizontal: 20, marginBottom: 10, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: C.white, borderWidth: 1, borderColor: C.border, borderRadius: 14 },
-  searchInput: { flex: 1, color: C.text, fontSize: 13, paddingVertical: 10 },
-  tabs: { flexDirection: 'row', marginHorizontal: 20, marginTop: 8, marginBottom: 8, padding: 4, borderRadius: 14, backgroundColor: '#E9EFF0', borderWidth: 1, borderColor: C.border },
-  tab: { flex: 1, minHeight: 40, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  headerTitle: { color: C.text, fontSize: 17, fontWeight: '800' },
+  headerSubtitle: { color: C.muted, fontSize: 10, marginTop: 3 },
+  wideContent: { width: '100%', maxWidth: 900, alignSelf: 'center' },
+  searchWrap: { minHeight: 46, marginHorizontal: 18, marginBottom: 9, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 9, borderRadius: 14, backgroundColor: C.white, borderWidth: 1, borderColor: C.border },
+  searchInput: { flex: 1, paddingVertical: 10, color: C.text, fontSize: 13 },
+  tabs: { width: 'auto', flexDirection: 'row', marginHorizontal: 18, marginTop: 5, marginBottom: 5, padding: 4, borderRadius: 14, backgroundColor: '#E9EFF0', borderWidth: 1, borderColor: C.border },
+  tab: { flex: 1, minHeight: 40, borderRadius: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   tabActive: { backgroundColor: C.teal },
   tabText: { color: C.muted, fontSize: 12, fontWeight: '700' },
   tabTextActive: { color: C.white },
-  countBadge: { overflow: 'hidden', color: C.dark, backgroundColor: '#D7ECE8', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9, fontWeight: '800' },
-  countBadgeActive: { color: C.teal, backgroundColor: C.white },
-  list: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 32, flexGrow: 1 },
-  card: { backgroundColor: C.white, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 15, marginBottom: 13 },
-  cardPressed: { borderColor: C.teal, backgroundColor: '#F8FCFC' },
-  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  seatBadge: { width: 49, height: 49, borderRadius: 15, borderWidth: 1, borderColor: '#BDE4DD', backgroundColor: C.pale, alignItems: 'center', justifyContent: 'center' },
-  seatEyebrow: { color: C.muted, fontSize: 8, fontWeight: '700', letterSpacing: 1 },
-  seatNumber: { color: C.teal, fontSize: 16, fontWeight: '900', marginTop: 1 },
-  cardHeading: { flex: 1 },
-  roomName: { color: C.text, fontSize: 13, fontWeight: '800' },
-  metaLine: { color: C.muted, fontSize: 10, marginTop: 5 },
-  statusPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 12 },
-  statusText: { fontSize: 9, fontWeight: '800', textTransform: 'capitalize' },
-  dateStrip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, paddingHorizontal: 11, paddingVertical: 10, backgroundColor: C.bg, borderRadius: 12, borderWidth: 1, borderColor: C.border },
-  dateTextWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 },
-  dateText: { color: C.text, fontSize: 10, fontWeight: '600', flexShrink: 1 },
-  activeLabel: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  activeLabelText: { color: C.emerald, fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
-  expiredText: { color: C.muted, fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
-  actions: { flexDirection: 'row', gap: 8, marginTop: 12, paddingTop: 11, borderTopWidth: 1, borderTopColor: C.border },
-  passButton: { flex: 1, minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 12, borderWidth: 1, borderColor: '#CFE5E3', backgroundColor: '#F7FBFA' },
-  passButtonText: { color: C.dark, fontSize: 10, fontWeight: '700' },
-  cancelButton: { minWidth: 86, minHeight: 38, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, borderRadius: 12, borderWidth: 1, borderColor: '#F0C7C9', backgroundColor: '#FFF9F9' },
-  cancelText: { color: C.rose, fontSize: 10, fontWeight: '700' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28 },
+  tabCount: { overflow: 'hidden', color: C.dark, backgroundColor: '#D8EFEC', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, fontSize: 9, fontWeight: '800' },
+  tabCountActive: { color: C.teal, backgroundColor: C.white },
+  list: { width: '100%', paddingHorizontal: 18, paddingTop: 9, paddingBottom: 16 },
+  listEmpty: { flexGrow: 1 },
+  card: { backgroundColor: C.white, borderRadius: 19, borderWidth: 1, borderColor: C.border, padding: 14, marginBottom: 12, shadowColor: '#1A3F49', shadowOpacity: 0.04, shadowRadius: 9, elevation: 1 },
+  cardMain: { minHeight: 116, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  cardDetails: { flex: 1, gap: 9 },
+  cardHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 2 },
+  seatHeading: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  seatNumber: { color: C.text, fontSize: 20, fontWeight: '900' },
+  statusPill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 15 },
+  statusText: { fontSize: 10, fontWeight: '800' },
+  detailLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  detailText: { flex: 1, color: C.muted, fontSize: 11, lineHeight: 16 },
+  cardImage: { width: 92, height: 112, borderRadius: 12, backgroundColor: '#E5EEEE' },
+  cardActions: { flexDirection: 'row', gap: 9, marginTop: 13 },
+  detailsButton: { flex: 1, minHeight: 41, borderRadius: 12, backgroundColor: '#EFF5F6', alignItems: 'center', justifyContent: 'center' },
+  detailsButtonText: { color: C.dark, fontSize: 11, fontWeight: '800' },
+  cancelButton: { flex: 1, minHeight: 41, borderRadius: 12, backgroundColor: C.roseBg, alignItems: 'center', justifyContent: 'center' },
+  cancelButtonText: { color: C.rose, fontSize: 11, fontWeight: '800' },
+  checkInButton: { flex: 1, minHeight: 41, borderRadius: 12, backgroundColor: C.greenBg, alignItems: 'center', justifyContent: 'center' },
+  checkInButtonText: { color: C.green, fontSize: 11, fontWeight: '800' },
+  actionHint: { flex: 1, minHeight: 41, alignItems: 'center', justifyContent: 'center' },
+  actionHintText: { color: C.green, fontSize: 10, fontWeight: '700' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 25 },
   helper: { color: C.muted, textAlign: 'center', fontSize: 12, marginTop: 9, lineHeight: 18 },
-  error: { color: '#A52B32', textAlign: 'center', fontSize: 13, marginTop: 12 },
-  retry: { marginTop: 16, backgroundColor: C.teal, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 10 },
+  errorText: { color: C.rose, textAlign: 'center', fontSize: 13, marginTop: 12 },
+  retryButton: { marginTop: 15, paddingHorizontal: 19, paddingVertical: 11, borderRadius: 12, backgroundColor: C.teal },
   retryText: { color: C.white, fontSize: 12, fontWeight: '800' },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28, paddingBottom: 70 },
-  emptyIcon: { width: 58, height: 58, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: C.pale, borderWidth: 1, borderColor: '#BDE4DD' },
-  emptyTitle: { color: C.text, fontSize: 16, fontWeight: '800', marginTop: 16 },
-  modalOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 10, justifyContent: 'flex-end', backgroundColor: 'rgba(24,50,59,0.35)' },
-  detailSheet: { paddingHorizontal: 22, paddingTop: 11, paddingBottom: 28, borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: C.white, borderWidth: 1, borderColor: C.border },
-  sheetHandle: { alignSelf: 'center', width: 38, height: 4, borderRadius: 3, backgroundColor: '#CBD6D8', marginBottom: 18 },
-  sheetHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 15, borderBottomWidth: 1, borderBottomColor: C.border },
-  sheetIcon: { width: 35, height: 35, borderRadius: 12, backgroundColor: C.pale, alignItems: 'center', justifyContent: 'center' },
-  sheetEyebrow: { color: C.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1 },
-  sheetId: { color: C.teal, fontSize: 11, fontWeight: '700', marginTop: 3 },
+  emptyState: { flex: 1, minHeight: 250, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 25 },
+  emptyIcon: { width: 58, height: 58, borderRadius: 19, backgroundColor: C.pale, alignItems: 'center', justifyContent: 'center' },
+  emptyTitle: { color: C.text, fontSize: 16, fontWeight: '800', marginTop: 15 },
+  modalOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 10, justifyContent: 'flex-end', backgroundColor: 'rgba(24,50,59,0.38)' },
+  detailSheet: { paddingHorizontal: 22, paddingTop: 12, paddingBottom: 25, borderTopLeftRadius: 25, borderTopRightRadius: 25, backgroundColor: C.white },
+  wideSheet: { width: '100%', maxWidth: 620, alignSelf: 'center', borderRadius: 25, marginBottom: 25 },
+  sheetHandle: { alignSelf: 'center', width: 38, height: 4, borderRadius: 3, backgroundColor: '#CBD6D8', marginBottom: 16 },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+  sheetIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: C.pale, alignItems: 'center', justifyContent: 'center' },
+  sheetTitle: { color: C.text, fontSize: 14, fontWeight: '800' },
+  sheetId: { color: C.muted, fontSize: 10, marginTop: 3 },
   closeButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' },
-  detailHero: { alignItems: 'center', paddingVertical: 20, marginTop: 15, borderRadius: 16, backgroundColor: C.pale, borderWidth: 1, borderColor: '#CFE5E3' },
-  detailLabel: { color: C.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1 },
-  detailSeat: { color: C.teal, fontSize: 24, fontWeight: '900', marginTop: 6 },
-  detailRoom: { color: C.text, fontSize: 12, marginTop: 4 },
-  detailGrid: { flexDirection: 'row', gap: 9, marginTop: 10 },
-  detailCell: { flex: 1, padding: 12, borderRadius: 14, backgroundColor: C.bg, borderWidth: 1, borderColor: C.border },
-  detailValue: { color: C.text, fontSize: 11, fontWeight: '700', marginTop: 8 },
-  modalStatusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16 },
-  modalCancel: { alignItems: 'center', paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: '#F0C7C9', backgroundColor: '#FFF9F9', marginBottom: 9 },
-  modalCancelText: { color: C.rose, fontSize: 12, fontWeight: '800' },
-  doneButton: { alignItems: 'center', paddingVertical: 13, borderRadius: 13, backgroundColor: C.teal },
-  doneText: { color: C.white, fontSize: 12, fontWeight: '900' },
+  sheetSeat: { color: C.teal, fontSize: 23, fontWeight: '900', marginVertical: 15 },
+  sheetPrimary: { minHeight: 43, borderRadius: 12, backgroundColor: C.teal, alignItems: 'center', justifyContent: 'center', marginTop: 16 },
+  sheetPrimaryText: { color: C.white, fontSize: 12, fontWeight: '800' },
+  sheetCancel: { minHeight: 43, borderRadius: 12, backgroundColor: C.roseBg, alignItems: 'center', justifyContent: 'center', marginTop: 9 },
+  sheetDone: { alignItems: 'center', paddingVertical: 13, marginTop: 6 },
+  sheetDoneText: { color: C.dark, fontSize: 12, fontWeight: '800' },
+  bottomTabs: { minHeight: 58, paddingTop: 7, paddingBottom: 3, backgroundColor: C.white, borderTopWidth: 1, borderTopColor: C.border, flexDirection: 'row', justifyContent: 'space-around' },
+  bottomTab: { minWidth: 60, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  bottomTabText: { color: C.muted, fontSize: 9 },
+  bottomTabTextActive: { color: C.dark, fontWeight: '800' },
 });
