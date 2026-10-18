@@ -67,7 +67,7 @@ export default function SignUpScreen({ navigation }) {
         Alert.alert(
           'Account Created',
           'A confirmation link has been sent to your email. Please confirm your email address, then log in.',
-          [{ text: 'OK', onPress: () => navigation.navigate('Login') }]
+          [{ text: 'OK', onPress: () => navigation.navigate('Login') }],
         );
       } else {
         navigation.reset({ index: 0, routes: [{ name: 'Home' }] });

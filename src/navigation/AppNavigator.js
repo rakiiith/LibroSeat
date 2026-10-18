@@ -19,7 +19,7 @@ import BookDetailsScreen from '../screens/book/BookDetailsScreen';
 import ReserveBookScreen from '../screens/book/ReserveBookScreen';
 import BookConfirmationScreen from '../screens/book/BookConfirmationScreen';
 
-import SeatAvailabilityScreen from '../screens/seat/SeatAvailabilityScreen';
+import FloorSelectionScreen from '../screens/seat/FloorSelectionScreen';
 import SelectSeatScreen from '../screens/seat/SelectSeatScreen';
 import SeatConfirmationScreen from '../screens/seat/SeatConfirmationScreen';
 
@@ -64,7 +64,7 @@ export default function AppNavigator() {
 
         {/* Full-screen detail pages (no bottom tab bar) */}
         <Stack.Screen name="NotificationDetail" component={NotificationDetailScreen} options={{ title: 'Notification' }} />
-        <Stack.Screen name="MyReservations" component={MyReservationsScreen} options={{ title: 'Reservation History' }} />
+        <Stack.Screen name="MyReservations" component={MyReservationsScreen} options={{ headerShown: false }} />
         <Stack.Screen name="ReservationDetail" component={ReservationDetailScreen} options={{ title: 'Reservation Detail' }} />
         <Stack.Screen name="PersonalInfo" component={PersonalInfoScreen} options={{ title: 'Personal Information' }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
@@ -73,9 +73,9 @@ export default function AppNavigator() {
         <Stack.Screen name="ReserveBook" component={ReserveBookScreen} options={{ title: 'Reserve Book' }} />
         <Stack.Screen name="BookConfirmation" component={BookConfirmationScreen} options={{ title: 'Confirmation', headerBackVisible: false }} />
 
-        <Stack.Screen name="SeatAvailability" component={SeatAvailabilityScreen} options={{ title: 'Book a Seat' }} />
-        <Stack.Screen name="SelectSeat" component={SelectSeatScreen} options={{ title: 'Select Seat' }} />
-        <Stack.Screen name="SeatConfirmation" component={SeatConfirmationScreen} options={{ title: 'Confirmation', headerBackVisible: false }} />
+        <Stack.Screen name="SeatAvailability" component={FloorSelectionScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="SelectSeat" component={SelectSeatScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="SeatConfirmation" component={SeatConfirmationScreen} options={{ headerShown: false }} />
 
         <Stack.Screen name="SeatAllocation" component={SeatAllocationScreen} options={{ title: 'Seat Allocation' }} />
         <Stack.Screen name="StaffProfile" component={StaffProfileScreen} options={{ headerShown: false }} />

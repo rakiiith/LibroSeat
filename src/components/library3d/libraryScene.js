@@ -6,6 +6,7 @@ import {
   cachedRoundedBoxGeometry,
   cachedSphereGeometry,
   createCarpetMaterial,
+  createWallMaterial,
   disposeObjectResources,
   instanceRepeatedOpaqueMeshes,
 } from './sceneOptimization';
@@ -35,8 +36,14 @@ function createExpoRenderer(gl, mobileOptimized, width, height) {
 
 // Concept dimensions only. Replace these with measured SLIIT dimensions later.
 const createMaterials = () => ({
-  carpet: createCarpetMaterial('#55545a'),
-  wall: new THREE.MeshStandardMaterial({ color: '#e6e5e1', roughness: 0.86 }),
+  carpet: createCarpetMaterial('#68676e'),
+  wall: createWallMaterial('#e9e2d8'),
+  wallPanel: new THREE.MeshStandardMaterial({ color: '#457884', roughness: 0.78 }),
+  wallPanelLight: new THREE.MeshStandardMaterial({ color: '#c7b28f', roughness: 0.82 }),
+  wallPanelDeep: new THREE.MeshStandardMaterial({ color: '#355866', roughness: 0.76 }),
+  wallTrim: new THREE.MeshStandardMaterial({ color: '#b99460', metalness: 0.18, roughness: 0.55 }),
+  tableSurface: new THREE.MeshStandardMaterial({ color: '#e4ddcf', roughness: 0.7 }),
+  chairInset: new THREE.MeshStandardMaterial({ color: '#626a70', roughness: 0.86 }),
   white: new THREE.MeshStandardMaterial({ color: '#f4f3ef', roughness: 0.6 }),
   blue: new THREE.MeshStandardMaterial({ color: '#074bb4', roughness: 0.48 }),
   blueDeep: new THREE.MeshStandardMaterial({ color: '#062f78', roughness: 0.52 }),
@@ -108,11 +115,12 @@ function roundedSeat(parent, x, z, m, rotation = 0) {
   group.rotation.y = rotation;
   parent.add(group);
   roundedBox(group, 0, 0.52, 0, 0.64, 0.16, 0.62, 0.12, m.chair, 'chair-seat', true);
+  roundedBox(group, 0, 0.615, 0, 0.53, 0.028, 0.49, 0.085, m.chairInset, 'chair-seat-cushion', true);
   const back = roundedBox(group, 0, 0.88, -0.24, 0.64, 0.66, 0.13, 0.12, m.chair, 'chair-back');
   back.rotation.x = -0.08;
   for (const dx of [-0.24, 0.24]) {
     for (const dz of [-0.21, 0.21]) {
-      const leg = box(group, dx, 0.25, dz, 0.055, 0.48, 0.055, m.wood, 'wood-chair-leg');
+      const leg = box(group, dx, 0.24, dz, 0.055, 0.48, 0.055, m.wood, 'wood-chair-leg');
       leg.rotation.x = dz * 0.2;
       leg.rotation.z = dx * -0.08;
     }
@@ -125,13 +133,15 @@ function studyDesk(parent, x, z, m, options = {}) {
   group.position.set(x, 0, z);
   parent.add(group);
   roundedBox(group, 0, 0.94, 0, width, 0.13, depth, 0.075, m.white, 'white-study-table', true);
+  roundedBox(group, 0, 1.016, 0, width * 0.96, 0.018, depth * 0.95, 0.06, m.tableSurface, 'warm-laminate-table-inset', true);
   for (const dx of [-width * 0.43, width * 0.43]) {
     for (const dz of [-depth * 0.36, depth * 0.36]) {
-      box(group, dx, 0.47, dz, 0.07, 0.88, 0.07, m.metal, 'white-table-frame');
+      box(group, dx, 0.44, dz, 0.07, 0.88, 0.07, m.metal, 'white-table-frame');
     }
   }
   box(group, 0, 0.82, -depth * 0.34, width * 0.78, 0.075, 0.055, m.metal, 'study-table-long-support');
   box(group, 0, 0.82, depth * 0.34, width * 0.78, 0.075, 0.055, m.metal, 'study-table-long-support');
+  box(group, 0, 0.81, depth * 0.44, width * 0.86, 0.13, 0.055, m.wood, 'timber-table-apron');
   for (const dx of [-width * 0.39, width * 0.39]) {
     box(group, dx, 0.82, 0, 0.055, 0.075, depth * 0.58, m.metal, 'study-table-cross-support');
   }
@@ -279,6 +289,25 @@ function addCeiling(parent, m) {
   parent.add(pipe);
 }
 
+function addWallFinish(parent, m) {
+  const panels = [m.wallPanel, m.wallPanelLight, m.wallPanelDeep, m.wallPanel];
+  for (const side of [-1, 1]) {
+    for (const exterior of [false, true]) {
+      const x = side * (exterior ? 9.63 : 9.37);
+      const towardViewer = side * (exterior ? 1 : -1);
+      for (let index = 0; index < 4; index += 1) {
+        const z = -5.55 + index * 3.7;
+        box(parent, x, 1.02, z, 0.045, 1.62, 3.1, panels[(index + (side > 0 ? 0 : 1)) % panels.length], 'colored-acoustic-wall-panel');
+        box(parent, x + towardViewer * 0.028, 1.02, z, 0.012, 1.38, 2.82, m.wall, 'wall-panel-inset');
+        for (const edge of [-1, 1]) {
+          box(parent, x + towardViewer * 0.04, 1.02, z + edge * 1.53, 0.035, 1.67, 0.045, m.wallTrim, 'wall-panel-edge-trim');
+        }
+      }
+      box(parent, x + towardViewer * 0.025, 1.88, 0, 0.05, 0.06, 14.7, m.wallTrim, 'continuous-wall-chair-rail');
+    }
+  }
+}
+
 function buildFloor(scene, floorIndex) {
   const m = createMaterials();
   const group = new THREE.Group();
@@ -295,6 +324,7 @@ function buildFloor(scene, floorIndex) {
   box(group, 0, 0.45, -7.48, 17.0, 0.9, 0.2, m.wall, 'rear-window-sill-wall');
   box(group, 0, 3.86, -7.48, 17.0, 0.28, 0.2, m.wall, 'rear-window-head-wall');
   addWindows(group, m);
+  addWallFinish(group, m);
 
   // Blue feature wall, columns, study tables and other recognisable furniture.
   addFeatureWall(group, m);
@@ -373,8 +403,8 @@ export function createLibraryScene(gl, initialFloor = 0, { mobileOptimized = fal
     throw new Error('The GL view has no measurable size yet. Try reopening this screen.');
   }
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#111c2b');
-  scene.fog = new THREE.Fog('#111c2b', 42, 100);
+  scene.background = new THREE.Color('#F6F9FA');
+  scene.fog = new THREE.Fog('#F6F9FA', 48, 108);
 
   const cameraAspect = viewWidth / Math.max(viewHeight, 1);
   const camera = new THREE.PerspectiveCamera(42, cameraAspect, 0.2, 100);
@@ -392,8 +422,8 @@ export function createLibraryScene(gl, initialFloor = 0, { mobileOptimized = fal
     camera.updateProjectionMatrix();
     const visibleHorizontalFov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * aspect);
     const projectedRoomWidth = Math.hypot(19.2 * Math.cos(0.72), 15.1 * Math.sin(0.72));
-    const fitRadius = projectedRoomWidth / (2 * Math.tan(visibleHorizontalFov / 2) * Math.cos(0.58)) * 1.06;
-    return THREE.MathUtils.clamp(Math.max(31, fitRadius), 31, 46);
+    const fitRadius = projectedRoomWidth / (2 * Math.tan(visibleHorizontalFov / 2) * Math.cos(0.58)) * 0.98;
+    return THREE.MathUtils.clamp(Math.max(24, fitRadius), 24, 38);
   }
 
   let defaultRadius = updateCameraFraming(cameraAspect);
@@ -403,8 +433,8 @@ export function createLibraryScene(gl, initialFloor = 0, { mobileOptimized = fal
   // Keep the completed frame's call count available to the native startup
   // guard; Three.js otherwise resets it before the caller can inspect it.
   renderer.info.autoReset = false;
-  renderer.setClearColor('#111c2b', 1);
-  renderer.shadowMap.enabled = !mobileOptimized;
+  renderer.setClearColor('#F6F9FA', 1);
+  renderer.shadowMap.enabled = true;
   // Keep the renderer on the broadly supported PCF path for Expo GL.
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -414,8 +444,8 @@ export function createLibraryScene(gl, initialFloor = 0, { mobileOptimized = fal
   scene.add(new THREE.HemisphereLight(0xdceeff, 0x645b50, 1.85));
   const sun = new THREE.DirectionalLight(0xffe5c5, 2.65);
   sun.position.set(-12, 22, 16);
-  sun.castShadow = !mobileOptimized;
-  sun.shadow.mapSize.set(1024, 1024);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(mobileOptimized ? 512 : 1024, mobileOptimized ? 512 : 1024);
   sun.shadow.camera.left = -12;
   sun.shadow.camera.right = 12;
   sun.shadow.camera.top = 10;
@@ -430,15 +460,6 @@ export function createLibraryScene(gl, initialFloor = 0, { mobileOptimized = fal
   fill.position.set(15, 12, -12);
   scene.add(fill);
 
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(160, 160),
-    new THREE.MeshStandardMaterial({ color: '#111a27', roughness: 1 })
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.43;
-  ground.receiveShadow = true;
-  scene.add(ground);
-
   const startingFloor = Number.isInteger(initialFloor) && initialFloor >= 0 && initialFloor <= 2
     ? initialFloor
     : 0;
@@ -451,6 +472,7 @@ export function createLibraryScene(gl, initialFloor = 0, { mobileOptimized = fal
     floor: startingFloor,
     tween: null,
     animationClock: 0,
+    interacting: false,
   };
 
   const setCameraFromOrbit = () => {
@@ -467,13 +489,15 @@ export function createLibraryScene(gl, initialFloor = 0, { mobileOptimized = fal
   setCameraFromOrbit();
 
   function animateTo(position, target, duration = 900) {
+    const destination = new THREE.Vector3(...position);
     state.tween = {
       elapsed: 0,
       duration,
       fromPosition: camera.position.clone(),
-      toPosition: new THREE.Vector3(...position),
+      toPosition: destination,
       fromTarget: state.target.clone(),
       toTarget: new THREE.Vector3(...target),
+      lift: Math.min(1.15, camera.position.distanceTo(destination) * 0.075),
     };
   }
 
@@ -493,8 +517,9 @@ export function createLibraryScene(gl, initialFloor = 0, { mobileOptimized = fal
       if (state.tween) {
         state.tween.elapsed = Math.min(state.tween.elapsed + delta, state.tween.duration);
         const t = state.tween.elapsed / state.tween.duration;
-        const eased = t * t * (3 - 2 * t);
+        const eased = t * t * t * (t * (t * 6 - 15) + 10);
         camera.position.lerpVectors(state.tween.fromPosition, state.tween.toPosition, eased);
+        camera.position.y += Math.sin(Math.PI * eased) * state.tween.lift;
         state.target.lerpVectors(state.tween.fromTarget, state.tween.toTarget, eased);
         camera.lookAt(state.target);
         if (t >= 1) {
@@ -507,6 +532,9 @@ export function createLibraryScene(gl, initialFloor = 0, { mobileOptimized = fal
           state.tween = null;
         }
       } else {
+        // A restrained product-style orbit keeps the model alive between taps.
+        // Gestures temporarily pause it so the camera follows the user's hand.
+        if (!state.interacting) state.yaw += delta * 0.000028;
         setCameraFromOrbit();
       }
       renderer.info.reset();
@@ -555,14 +583,23 @@ export function createLibraryScene(gl, initialFloor = 0, { mobileOptimized = fal
       state.radius = THREE.MathUtils.clamp(radius, 13, 70);
       setCameraFromOrbit();
     },
+    beginInteraction() {
+      state.interacting = true;
+    },
+    endInteraction() {
+      state.interacting = false;
+    },
     reset() {
       camera.up.set(0, 1, 0);
-      state.yaw = 0.72;
-      state.pitch = 0.58;
-      state.radius = defaultRadius;
-      state.target.set(0, 0.9, 0);
-      state.tween = null;
-      setCameraFromOrbit();
+      const yaw = 0.72;
+      const pitch = 0.58;
+      const target = [0, 0.9, 0];
+      const horizontalRadius = defaultRadius * Math.cos(pitch);
+      animateTo([
+        target[0] + horizontalRadius * Math.sin(yaw),
+        target[1] + defaultRadius * Math.sin(pitch),
+        target[2] + horizontalRadius * Math.cos(yaw),
+      ], target, 850);
     },
     zoom(factor) {
       const radius = THREE.MathUtils.clamp(state.radius * factor, 13, 70);

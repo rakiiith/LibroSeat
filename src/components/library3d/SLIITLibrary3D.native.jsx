@@ -14,9 +14,11 @@ import {
   View,
 } from 'react-native';
 import { GLView } from 'expo-gl';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import { createLibraryScene } from './libraryScene';
-import { FLOOR_AREAS, FLOOR_THEMES } from './floorAreaConfig';
+import { FLOOR_AREAS } from './floorAreaConfig';
 import { styles, COLORS } from './SLIITLibrary3D.styles';
 
 const FLOORS = ['Ground Floor', '1st Floor', '2nd Floor'];
@@ -27,7 +29,7 @@ const FLOORS = ['Ground Floor', '1st Floor', '2nd Floor'];
  *   initialFloor: 0 | 1 | 2
  *   onContinue: ({ floorIndex, floorName }) => navigation.navigate(...)
  */
-export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
+export default function SLIITLibrary3D({ initialFloor = 0, onContinue, navigation }) {
   const validInitialFloor = Number.isInteger(initialFloor) && initialFloor >= 0 && initialFloor < FLOORS.length
     ? initialFloor
     : 0;
@@ -38,7 +40,7 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
   const screenActiveRef = useRef(false);
   const startRenderLoopRef = useRef(null);
   const mountedRef = useRef(true);
-  const gestureRef = useRef({ yaw: 0.72, pitch: 0.58, radius: 31, startX: 0, startY: 0, lastPinch: 0 });
+  const gestureRef = useRef({ yaw: 0.72, pitch: 0.58, radius: 31, startX: 0, startY: 0, lastPinch: 0, touchCount: 0 });
   const [floor, setFloor] = useState(validInitialFloor);
   const [glSize, setGlSize] = useState({ width: 0, height: 0 });
   const [area, setArea] = useState(FLOOR_AREAS[validInitialFloor]?.[0] || FLOOR_AREAS[0][0]);
@@ -51,7 +53,7 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
   const currentFloorRef = useRef(floor);
   currentFloorRef.current = floor;
   const areas = FLOOR_AREAS[floor] || FLOOR_AREAS[0];
-  const theme = FLOOR_THEMES[floor] || FLOOR_THEMES[0];
+  const modelHeight = Math.max(glSize.height - 405, 220);
 
   const stopRenderLoop = useCallback(() => {
     const loop = renderLoopRef.current;
@@ -181,7 +183,7 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
 
   useEffect(() => {
     if (!sceneRef.current || !glSize.width || !glSize.height) return;
-    sceneRef.current.resize(glSize.width * PixelRatio.get(), glSize.height * PixelRatio.get());
+    sceneRef.current.resize(glSize.width * PixelRatio.get(), Math.max(glSize.height - 405, 220) * PixelRatio.get());
   }, [glSize.height, glSize.width]);
 
   useEffect(() => {
@@ -201,6 +203,7 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
     onPanResponderGrant: (event, gesture) => {
       const api = sceneRef.current;
       if (api) {
+        api.beginInteraction();
         gestureRef.current.yaw = api.state.yaw;
         gestureRef.current.pitch = api.state.pitch;
         gestureRef.current.radius = api.state.radius;
@@ -208,6 +211,7 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
       gestureRef.current.startX = gesture.dx;
       gestureRef.current.startY = gesture.dy;
       const touches = event.nativeEvent.touches || [];
+      gestureRef.current.touchCount = touches.length;
       if (touches.length >= 2) {
         const dx = touches[0].pageX - touches[1].pageX;
         const dy = touches[0].pageY - touches[1].pageY;
@@ -222,19 +226,46 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
         const dx = touches[0].pageX - touches[1].pageX;
         const dy = touches[0].pageY - touches[1].pageY;
         const distance = Math.sqrt(dx * dx + dy * dy);
-        const previous = gestureRef.current.lastPinch || distance;
+        if (gestureRef.current.touchCount < 2 || !gestureRef.current.lastPinch) {
+          gestureRef.current.yaw = api.state.yaw;
+          gestureRef.current.pitch = api.state.pitch;
+          gestureRef.current.radius = api.state.radius;
+          gestureRef.current.lastPinch = distance;
+          gestureRef.current.touchCount = touches.length;
+          return;
+        }
+        const previous = gestureRef.current.lastPinch;
         const radius = gestureRef.current.radius * (previous / Math.max(distance, 1));
         gestureRef.current.lastPinch = distance;
+        gestureRef.current.touchCount = touches.length;
         gestureRef.current.radius = Math.min(48, Math.max(13, radius));
         api.setOrbit(gestureRef.current.yaw, gestureRef.current.pitch, gestureRef.current.radius);
       } else {
+        if (gestureRef.current.touchCount >= 2) {
+          gestureRef.current.yaw = api.state.yaw;
+          gestureRef.current.pitch = api.state.pitch;
+          gestureRef.current.radius = api.state.radius;
+          gestureRef.current.startX = gesture.dx;
+          gestureRef.current.startY = gesture.dy;
+          gestureRef.current.lastPinch = 0;
+          gestureRef.current.touchCount = touches.length;
+          return;
+        }
         const yaw = gestureRef.current.yaw - (gesture.dx - gestureRef.current.startX) * 0.006;
         const pitch = gestureRef.current.pitch + (gesture.dy - gestureRef.current.startY) * 0.004;
+        gestureRef.current.touchCount = touches.length;
         api.setOrbit(yaw, pitch, gestureRef.current.radius);
       }
     },
     onPanResponderRelease: () => {
       gestureRef.current.lastPinch = 0;
+      gestureRef.current.touchCount = 0;
+      sceneRef.current?.endInteraction();
+    },
+    onPanResponderTerminate: () => {
+      gestureRef.current.lastPinch = 0;
+      gestureRef.current.touchCount = 0;
+      sceneRef.current?.endInteraction();
     },
     onPanResponderTerminationRequest: () => true,
   }), []);
@@ -250,11 +281,12 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
   };
 
   return (
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
     <View style={styles.root} onLayout={handleRootLayout}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
       {glSize.width > 0 && glSize.height > 0 && (
         <GLView
-          style={[styles.glView, { width: glSize.width, height: glSize.height }]}
+          style={[styles.glView, { width: glSize.width, height: modelHeight }]}
           msaaSamples={0}
           onContextCreate={handleContextCreate}
         />
@@ -263,10 +295,30 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
       {/* Transparent touch layer: one-finger orbit and two-finger pinch zoom. */}
       <View style={styles.gestureLayer} {...panResponder.panHandlers} />
 
-      <View style={styles.topBar} pointerEvents="box-none">
+      <View style={styles.brandBar}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => navigation?.goBack()} style={styles.brandButton}>
+          <Ionicons name="arrow-back" size={21} color="#17333C" />
+        </Pressable>
+        <View style={styles.brandLockup}>
+          <Ionicons name="book" size={23} color={COLORS.teal} />
+          <Text style={styles.brandName}>LibroSeat</Text>
+        </View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Notifications" onPress={() => navigation?.navigate('Home', { screen: 'Notifications' })} style={styles.brandButton}>
+          <Ionicons name="notifications-outline" size={21} color="#17333C" />
+        </Pressable>
+      </View>
+
+      <View style={styles.pageHeader} pointerEvents="box-none">
+        <View style={styles.headingRow}>
+          <View style={styles.headingCopy}>
+            <Text style={styles.pageTitle}>Choose a study space</Text>
+            <Text style={styles.pageSubtitle}>Explore the library and select a floor</Text>
+          </View>
+          <View style={styles.headingIcon}><Ionicons name="business-outline" size={21} color={COLORS.teal} /></View>
+        </View>
         <View style={styles.floorTabs}>
           {FLOORS.map((name, index) => (
-            <Pressable key={name} onPress={() => changeFloor(index)} style={[styles.floorTab, floor === index && [styles.activeTab, { backgroundColor: theme.accent }]]}>
+            <Pressable key={name} onPress={() => changeFloor(index)} style={[styles.floorTab, floor === index && styles.activeTab]}>
               <Text style={[styles.floorTabText, floor === index && styles.activeTabText]}>{name}</Text>
             </Pressable>
           ))}
@@ -274,9 +326,10 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
       </View>
 
       <View style={styles.areaStripWrap}>
+        <Text style={styles.sectionTitle}>Study areas</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.areaStrip}>
           {areas.map((item) => (
-            <Pressable key={item.id} style={[styles.areaCard, area.id === item.id && [styles.activeAreaCard, { borderColor: theme.accent, backgroundColor: theme.accentSoft }]]} onPress={() => selectArea(item)}>
+            <Pressable key={item.id} style={[styles.areaCard, area.id === item.id && styles.activeAreaCard]} onPress={() => selectArea(item)}>
               <View style={styles.areaPreview}>
                 <Image source={item.image} resizeMode="cover" style={styles.areaImage} />
                 <View style={styles.areaIconBadge}><Text style={styles.areaIcon}>{item.icon}</Text></View>
@@ -289,12 +342,13 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
 
       <View style={styles.continueWrap}>
         <Pressable
-          style={[styles.continueButton, { backgroundColor: theme.accent }]}
+          style={styles.continueButton}
           onPress={() => onContinue
-            ? onContinue({ floorIndex: floor, floorName: FLOORS[floor] })
+            ? onContinue({ floorIndex: floor, floorName: FLOORS[floor], areaId: area.id, areaName: area.title })
             : setSeatModal(true)}
         >
-          <Text style={styles.continueButtonText}>Continue with Selected Floor  →</Text>
+          <Text style={styles.continueButtonText}>Continue with selected study area</Text>
+          <Ionicons name="arrow-forward" size={20} color={COLORS.white} />
         </Pressable>
       </View>
 
@@ -326,5 +380,6 @@ export default function SLIITLibrary3D({ initialFloor = 0, onContinue }) {
         </View>
       </Modal>
     </View>
+    </SafeAreaView>
   );
 }
