@@ -13,9 +13,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, typography } from '../../theme/theme';
 import { StatusBadge, EmptyState } from '../../components/UIKit';
+import BookCover from '../../components/BookCover';
 import { searchBooks, fetchCategories } from './bookService';
-
-const COVER_TINTS = ['#4F7CFF', '#E0457B', '#F0A92B', '#14919B', '#8E5BE8'];
 
 export default function SearchBooksScreen({ navigation }) {
   const [query, setQuery] = useState('');
@@ -95,15 +94,12 @@ export default function SearchBooksScreen({ navigation }) {
           keyExtractor={(b) => b.id}
           ListEmptyComponent={<EmptyState message="No books match your search." />}
           renderItem={({ item, index }) => {
-            const tint = COVER_TINTS[index % COVER_TINTS.length];
             return (
               <TouchableOpacity
                 style={styles.bookCard}
                 onPress={() => navigation.navigate('BookDetails', { book: item })}
               >
-                <View style={[styles.cover, { backgroundColor: tint + '22' }]}>
-                  <Ionicons name="book-outline" size={22} color={tint} />
-                </View>
+                <BookCover book={item} style={styles.cover} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.bookTitle}>{item.title}</Text>
                   <Text style={typography.muted}>{item.author}</Text>
@@ -173,11 +169,8 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   cover: {
-    width: 52,
-    height: 60,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 58,
+    height: 76,
   },
   bookTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
 });

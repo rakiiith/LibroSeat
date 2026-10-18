@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, radius, spacing, typography } from '../../theme/theme';
 import { PrimaryButton, StatusBadge } from '../../components/UIKit';
+import BookCover from '../../components/BookCover';
 
 export default function BookDetailsScreen({ route, navigation }) {
   const book = route?.params?.book;
@@ -52,13 +52,7 @@ export default function BookDetailsScreen({ route, navigation }) {
           <Text style={styles.backButtonText}>Book Details</Text>
         </TouchableOpacity>
 
-        <View style={styles.cover}>
-          {book.coverUrl ? (
-            <Image source={{ uri: book.coverUrl }} style={styles.coverImage} resizeMode="cover" />
-          ) : (
-            <Ionicons name="book-outline" size={52} color={colors.primary} />
-          )}
-        </View>
+        <BookCover book={book} style={styles.cover} variant="large" />
 
         <Text style={styles.title}>{book.title || 'Untitled book'}</Text>
         <Text style={styles.author}>{book.author || 'Unknown author'}</Text>
@@ -121,14 +115,11 @@ const styles = StyleSheet.create({
     width: 176,
     height: 220,
     alignSelf: 'center',
-    alignItems: 'center',
-    justifyContent: 'center',
     overflow: 'hidden',
     borderRadius: radius.lg,
     backgroundColor: colors.primary + '18',
     marginBottom: spacing.lg,
   },
-  coverImage: { width: '100%', height: '100%' },
   title: { ...typography.title, fontSize: 25, textAlign: 'center' },
   author: { ...typography.muted, fontSize: 15, textAlign: 'center', marginTop: spacing.xs },
   status: { alignItems: 'center', marginTop: spacing.md, marginBottom: spacing.sm },

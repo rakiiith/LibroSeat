@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { colors, radius, spacing, typography } from '../../theme/theme';
 import { PrimaryButton } from '../../components/UIKit';
+import BookCover from '../../components/BookCover';
 import { reserveBook } from './bookService';
 
 function formatIso(date) {
@@ -98,9 +99,14 @@ export default function ReserveBookScreen({ route, navigation }) {
         </TouchableOpacity>
 
         <View style={styles.card}>
-          <Text style={styles.title}>{book.title || 'Untitled book'}</Text>
-          <Text style={styles.author}>{book.author || 'Unknown author'}</Text>
-          <Text style={styles.category}>{book.category || 'Book reservation'}</Text>
+          <View style={styles.bookOverview}>
+            <BookCover book={book} style={styles.bookCover} />
+            <View style={styles.bookInfo}>
+              <Text style={styles.title}>{book.title || 'Untitled book'}</Text>
+              <Text style={styles.author}>{book.author || 'Unknown author'}</Text>
+              <Text style={styles.category}>{book.category || 'Book reservation'}</Text>
+            </View>
+          </View>
         </View>
 
         <Text style={styles.sectionTitle}>Reservation dates</Text>
@@ -201,6 +207,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  bookOverview: { flexDirection: 'row', alignItems: 'center' },
+  bookCover: { width: 76, height: 102, marginRight: spacing.md },
+  bookInfo: { flex: 1 },
   title: { ...typography.title, fontSize: 21 },
   author: { ...typography.muted, marginTop: spacing.xs },
   category: { ...typography.muted, marginTop: spacing.sm },

@@ -1,6 +1,7 @@
 import React from 'react';
 import { SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { colors, radius, spacing, typography } from '../../theme/theme';
+import BookCover from '../../components/BookCover';
 
 function formatDate(value) {
   if (!value) return '—';
@@ -25,8 +26,13 @@ export default function BookConfirmationScreen({ route, navigation }) {
         <Text style={styles.subtitle}>Your book has been successfully reserved.</Text>
 
         <View style={styles.card}>
-          <Text style={styles.bookTitle}>{reservation?.book_title || book?.title || 'Book'}</Text>
-          <Text style={styles.author}>{reservation?.book_author || book?.author || 'Unknown author'}</Text>
+          <View style={styles.bookOverview}>
+            <BookCover book={book} style={styles.bookCover} />
+            <View style={styles.bookInfo}>
+              <Text style={styles.bookTitle}>{reservation?.book_title || book?.title || 'Book'}</Text>
+              <Text style={styles.author}>{reservation?.book_author || book?.author || 'Unknown author'}</Text>
+            </View>
+          </View>
           <Detail label="Reservation code" value={reservationCode} />
           <Detail label="Reservation date" value={formatDate(reservation?.reservation_date)} />
           <Detail label="Pickup before" value={formatDate(reservation?.pickup_before)} />
@@ -85,7 +91,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
   },
   bookTitle: { ...typography.subtitle, fontSize: 19 },
-  author: { ...typography.muted, marginTop: spacing.xs, marginBottom: spacing.md },
+  bookOverview: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md },
+  bookCover: { width: 64, height: 86, marginRight: spacing.md },
+  bookInfo: { flex: 1 },
+  author: { ...typography.muted, marginTop: spacing.xs },
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.sm },
   label: { ...typography.muted },
   value: { ...typography.body, textAlign: 'right', flexShrink: 1, marginLeft: spacing.md },

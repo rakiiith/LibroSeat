@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Modal, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { Alert, View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Modal, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, spacing, radius, typography } from '../../theme/theme';
 import { supabase } from '../../supabase/supabaseClient';
+import BookCover from '../../components/BookCover';
 
 export default function ManageInventoryScreen({ navigation }) {
   const [books, setBooks] = useState([]);
@@ -16,10 +17,12 @@ export default function ManageInventoryScreen({ navigation }) {
   const [newTitle, setNewTitle] = useState('');
   const [newAuthor, setNewAuthor] = useState('');
   const [newIsbn, setNewIsbn] = useState('');
+  const [newCoverUrl, setNewCoverUrl] = useState('');
   const [newLocation, setNewLocation] = useState('');
   const [newTotal, setNewTotal] = useState(5);
   const [newAvailable, setNewAvailable] = useState(5);
   const [newCategory, setNewCategory] = useState('');
+  const [editingBook, setEditingBook] = useState(null);
   const [saving, setSaving] = useState(false);
 
   // Success Modal State
@@ -31,38 +34,78 @@ export default function ManageInventoryScreen({ navigation }) {
   }, []);
 
   async function handleSaveBook() {
-    if (!newTitle || !newAuthor) return;
+    if (!newTitle.trim() || !newAuthor.trim()) {
+      Alert.alert('Book details required', 'Enter the book title and author before saving.');
+      return;
+    }
+    const totalCopies = Math.max(0, Number(newTotal) || 0);
+    const availableCopies = Math.min(totalCopies, Math.max(0, Number(newAvailable) || 0));
+    const values = {
+      title: newTitle.trim(),
+      author: newAuthor.trim(),
+      isbn: newIsbn.trim() || null,
+      shelf: newLocation.trim() || null,
+      category: newCategory.trim() || null,
+      cover_url: newCoverUrl.trim() || null,
+      total_copies: totalCopies,
+      available_copies: availableCopies,
+      is_available: availableCopies > 0,
+      status: availableCopies > 0 ? 'available' : 'unavailable',
+    };
     setSaving(true);
-    const { data, error } = await supabase.from('books').insert({
-      title: newTitle,
-      author: newAuthor,
-      category: newCategory || null,
-      is_available: newAvailable > 0
-    });
-    setSaving(false);
-    
-    setLastSavedBook({
-      title: newTitle,
-      author: newAuthor,
-      isbn: newIsbn || 'N/A',
-      location: newLocation || 'Unassigned',
-      total: newTotal,
-      category: newCategory || 'Uncategorized'
-    });
-    
-    setModalVisible(false);
-    setSuccessVisible(true);
-    fetchBooks();
+    try {
+      const query = editingBook
+        ? supabase.from('books').update(values).eq('id', editingBook.id)
+        : supabase.from('books').insert(values);
+      const { error } = await query;
+      if (error) throw error;
+
+      setLastSavedBook({
+        ...values,
+        isbn: values.isbn || 'N/A',
+        location: values.shelf || 'Unassigned',
+        total: totalCopies,
+        category: values.category || 'Uncategorized',
+      });
+      setModalVisible(false);
+      setSuccessVisible(true);
+      handleResetForm();
+      await fetchBooks();
+    } catch (error) {
+      Alert.alert(editingBook ? 'Could not update book' : 'Could not add book', error.message || 'Please try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   function handleResetForm() {
     setNewTitle(''); 
     setNewAuthor(''); 
     setNewIsbn(''); 
+    setNewCoverUrl('');
     setNewLocation(''); 
     setNewCategory(''); 
     setNewTotal(5); 
     setNewAvailable(5);
+    setEditingBook(null);
+  }
+
+  function handleAddBook() {
+    handleResetForm();
+    setModalVisible(true);
+  }
+
+  function handleEditBook(book) {
+    setEditingBook(book);
+    setNewTitle(book.title || '');
+    setNewAuthor(book.author || '');
+    setNewIsbn(book.isbn || '');
+    setNewCoverUrl(book.cover_url || '');
+    setNewLocation(book.shelf || '');
+    setNewTotal(Number(book.total_copies ?? 1));
+    setNewAvailable(Number(book.available_copies ?? (book.is_available ? 1 : 0)));
+    setNewCategory(book.category || '');
+    setModalVisible(true);
   }
 
   function handleViewInventory() {
@@ -103,14 +146,12 @@ export default function ManageInventoryScreen({ navigation }) {
     return (
       <View style={styles.card}>
         <View style={styles.cardTop}>
-          <View style={styles.iconContainer}>
-            <MaterialCommunityIcons name="book-open-outline" size={24} color="#374151" />
-          </View>
+          <BookCover book={item} style={styles.inventoryCover} />
           <View style={styles.cardContent}>
             <View style={styles.titleRow}>
               <Text style={styles.bookTitle} numberOfLines={1}>{item.title}</Text>
-              <TouchableOpacity>
-                <Ionicons name="ellipsis-vertical" size={16} color={colors.textMuted} />
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Edit ${item.title}`} onPress={() => handleEditBook(item)} style={styles.editBookButton}>
+                <Ionicons name="create-outline" size={17} color={colors.primary} />
               </TouchableOpacity>
             </View>
             <Text style={styles.bookAuthor} numberOfLines={1}>{item.author || 'Unknown Author'}</Text>
@@ -199,7 +240,7 @@ export default function ManageInventoryScreen({ navigation }) {
             />
             <MaterialCommunityIcons name="barcode-scan" size={18} color={colors.primary} style={styles.searchBarcodeIcon} />
           </View>
-          <TouchableOpacity style={styles.addButton} onPress={() => setModalVisible(true)}>
+          <TouchableOpacity style={styles.addButton} onPress={handleAddBook}>
             <Ionicons name="add" size={24} color={colors.white} />
           </TouchableOpacity>
         </View>
@@ -248,8 +289,8 @@ export default function ManageInventoryScreen({ navigation }) {
             
             <View style={styles.modalHeader}>
               <View>
-                <Text style={styles.modalTitle}>Add New Book</Text>
-                <Text style={styles.modalSubtitle}>Enter catalog details for immediate circulation</Text>
+                <Text style={styles.modalTitle}>{editingBook ? 'Edit Book' : 'Add New Book'}</Text>
+                <Text style={styles.modalSubtitle}>{editingBook ? 'Update catalog details and book cover' : 'Enter catalog details for immediate circulation'}</Text>
               </View>
               <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setModalVisible(false)}>
                 <Ionicons name="close" size={20} color={colors.textMuted} />
@@ -262,6 +303,27 @@ export default function ManageInventoryScreen({ navigation }) {
 
               <Text style={styles.inputLabel}>Author <Text style={{color: colors.danger}}>*</Text></Text>
               <TextInput style={styles.formInput} placeholder="e.g. Harper Lee" placeholderTextColor={colors.textMuted} value={newAuthor} onChangeText={setNewAuthor} />
+
+              <Text style={styles.inputLabel}>Book Cover</Text>
+              <View style={styles.coverFormRow}>
+                <BookCover book={{ title: newTitle, author: newAuthor, category: newCategory, isbn: newIsbn, cover_url: newCoverUrl }} style={styles.formCoverPreview} />
+                <View style={styles.coverUrlColumn}>
+                  <View style={styles.formInputWithIcon}>
+                    <Ionicons name="image-outline" size={18} color={colors.textMuted} style={styles.inputIcon} />
+                    <TextInput
+                      style={styles.formInputInside}
+                      placeholder="Paste cover image URL"
+                      placeholderTextColor={colors.textMuted}
+                      value={newCoverUrl}
+                      onChangeText={setNewCoverUrl}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="url"
+                    />
+                  </View>
+                  <Text style={styles.coverHint}>If blank, we’ll try the ISBN cover. A designed fallback appears if no image is found.</Text>
+                </View>
+              </View>
 
               <View style={styles.labelRow}>
                 <Text style={styles.inputLabel}>ISBN / Catalog ID</Text>
@@ -323,7 +385,7 @@ export default function ManageInventoryScreen({ navigation }) {
                 {saving ? <ActivityIndicator color={colors.white} /> : (
                   <>
                     <Ionicons name="checkmark-circle" size={18} color={colors.white} style={{marginRight: 6}} />
-                    <Text style={styles.saveBtnText}>Save Book</Text>
+                    <Text style={styles.saveBtnText}>{editingBook ? 'Save Changes' : 'Save Book'}</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -372,9 +434,7 @@ export default function ManageInventoryScreen({ navigation }) {
             {lastSavedBook && (
               <View style={styles.successBookCard}>
                 <View style={styles.successBookTop}>
-                  <View style={styles.successBookImgPlaceholder}>
-                    <MaterialCommunityIcons name="book-open-variant" size={24} color="#90A4AE" />
-                  </View>
+                  <BookCover book={{ title: lastSavedBook.title, author: lastSavedBook.author, category: lastSavedBook.category, cover_url: lastSavedBook.cover_url, isbn: lastSavedBook.isbn }} style={styles.successBookImgPlaceholder} />
                   <View style={styles.successBookTopText}>
                     <Text style={styles.successEntryText}>NEW ENTRY</Text>
                     <Text style={styles.successBookTitle} numberOfLines={1}>{lastSavedBook.title}</Text>
@@ -516,7 +576,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     padding: spacing.md
   },
-  cardTop: { flexDirection: 'row' },
+  cardTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  inventoryCover: { width: 58, height: 76, flexShrink: 0 },
+  editBookButton: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EFFFFE' },
   iconContainer: {
     width: 48, height: 56, borderRadius: radius.sm,
     backgroundColor: '#E5EDF6', justifyContent: 'center', alignItems: 'center',
@@ -574,6 +636,10 @@ const styles = StyleSheet.create({
   },
   inputIcon: { marginLeft: 14, marginRight: 8 },
   formInputInside: { flex: 1, fontSize: 14, color: colors.text, height: '100%', paddingHorizontal: 10 },
+  coverFormRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.md },
+  formCoverPreview: { width: 76, height: 100, flexShrink: 0 },
+  coverUrlColumn: { flex: 1, minWidth: 0 },
+  coverHint: { color: colors.textMuted, fontSize: 10, lineHeight: 15, marginTop: 7 },
   
   rowInputs: { flexDirection: 'row', marginBottom: spacing.lg },
   numberInputContainer: { 
@@ -613,7 +679,7 @@ const styles = StyleSheet.create({
   
   successBookCard: { width: '100%', backgroundColor: colors.white, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.xl },
   successBookTop: { flexDirection: 'row', marginBottom: spacing.lg },
-  successBookImgPlaceholder: { width: 60, height: 80, backgroundColor: '#F3F4F6', borderRadius: 4, justifyContent: 'center', alignItems: 'center', marginRight: spacing.md },
+  successBookImgPlaceholder: { width: 60, height: 80, borderRadius: 4, marginRight: spacing.md },
   successBookTopText: { flex: 1, justifyContent: 'center' },
   successEntryText: { fontSize: 10, fontWeight: '700', color: '#4B5563', letterSpacing: 0.5, marginBottom: 4 },
   successBookTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 2 },
